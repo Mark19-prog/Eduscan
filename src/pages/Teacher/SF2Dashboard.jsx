@@ -1,49 +1,48 @@
-import { useState } from 'react';
-import { Lock, Unlock } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { FileSpreadsheet } from 'lucide-react';
 import AdviserAnalyticsWidget from '../../components/Teacher/AdviserAnalyticsWidget';
 import SubjectSelector from '../../components/Teacher/SubjectSelector';
 import SectionAttendance from '../../components/Teacher/SectionAttendance';
 import GradingModule from '../../components/Teacher/GradingModule';
 import SF2ReportGenerator from '../../components/Teacher/SF2ReportGenerator';
-import InterventionLogger from '../../components/Teacher/InterventionLogger';
 import StudentProfileModal from '../../components/Teacher/StudentProfileModal';
+import { api, localDate } from '../../api/client';
 
 export default function SF2Dashboard() {
   const [activeTab, setActiveTab] = useState('attendance');
   const [currentClass, setCurrentClass] = useState('10-rizal-math');
-  const [isLocked, setIsLocked] = useState(false);
+  const [currentSchedule, setCurrentSchedule] = useState(null);
   const [selectedStudent, setSelectedStudent] = useState(null);
+  const [rows, setRows] = useState([]);
+  const [error, setError] = useState('');
 
-  const students = [
-    { id: '2023-0192', name: 'Alvarez, Marco', gate: 'Present', override: 'Present', remark: '', absences: 1 },
-    { id: '2023-0144', name: 'Bautista, Sarah', gate: 'Present', override: 'Cutting Classes', remark: '', absences: 2 },
-    { id: '2023-0211', name: 'Cruz, Jonathan', gate: 'Absent', override: 'Absent', remark: 'Illness', absences: 5 },
-    { id: '2023-0305', name: 'Dela Torre, Mika', gate: 'Present', override: 'Present', remark: '', absences: 0 },
-    { id: '2023-0418', name: 'Esteban, Paulo', gate: 'Absent', override: 'Absent', remark: 'Family Problem', absences: 6 },
-  ];
+  useEffect(() => { api.get(`/attendance?date=${localDate()}`).then(setRows).catch((err) => setError(err.message)); }, []);
 
-  const sardoList = students.filter(s => s.absences >= 5);
+  const students = rows
+    .filter((person) => person.role === 'Student' && (!currentSchedule || (person.grade === currentSchedule.grade && person.section === currentSchedule.section)))
+    .map((person) => ({
+      ...person,
+      id: person.person_id,
+      name: person.full_name,
+      timeIn: person.time_in,
+      timeOut: person.time_out,
+      gate: person.status === 'No scan' ? 'Absent' : 'Present',
+      override: person.status === 'No scan' ? 'Absent' : person.status,
+      remark: person.correction_reason || '',
+      absences: person.status === 'Absent' ? 1 : 0,
+    }));
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '32px' }}>
       
       {/* Top Header & Analytics */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-        <SubjectSelector currentClass={currentClass} setCurrentClass={setCurrentClass} />
-        <button 
-          onClick={() => setIsLocked(!isLocked)}
-          className={`btn-primary ${isLocked ? 'locked-btn' : ''}`} 
-          style={{ 
-            background: isLocked ? 'var(--text-secondary)' : 'var(--success)', 
-            padding: '12px 24px',
-            boxShadow: isLocked ? 'none' : '0 4px 12px rgba(32, 201, 151, 0.3)'
-          }}
-        >
-          {isLocked ? <><Lock size={18} /> Month Submitted & Locked</> : <><Unlock size={18} /> Submit Monthly SF2</>}
-        </button>
+        <SubjectSelector currentClass={currentClass} setCurrentClass={setCurrentClass} setCurrentSchedule={setCurrentSchedule} />
+        <button onClick={() => setActiveTab('reports')} className="btn-primary"><FileSpreadsheet size={18} /> Generate monthly SF2</button>
       </div>
 
-      <AdviserAnalyticsWidget />
+      <AdviserAnalyticsWidget students={students} />
+      {error && <div className="notice notice-danger">{error}</div>}
 
       {/* Module Tabs */}
       <div style={{ display: 'flex', gap: '8px', borderBottom: '2px solid var(--border-color)', paddingBottom: '16px' }}>
@@ -69,14 +68,11 @@ export default function SF2Dashboard() {
 
       {/* Dynamic Module Rendering */}
       {activeTab === 'attendance' && (
-        <>
-          <InterventionLogger sardoList={sardoList} isLocked={isLocked} />
-          <SectionAttendance students={students} isLocked={isLocked} onStudentClick={setSelectedStudent} />
-        </>
+        <SectionAttendance students={students} isLocked={false} onStudentClick={setSelectedStudent} />
       )}
 
       {activeTab === 'grading' && (
-        <GradingModule students={students} onStudentClick={setSelectedStudent} />
+        <GradingModule students={students} classKey={currentClass} onStudentClick={setSelectedStudent} />
       )}
 
       {activeTab === 'reports' && (

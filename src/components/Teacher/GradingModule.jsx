@@ -1,87 +1,162 @@
-import { useState } from 'react';
-import { Calculator, Save } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { Calculator, CheckCircle2, History, Plus, Save, Trash2 } from 'lucide-react';
+import { api } from '../../api/client';
 
-export default function GradingModule({ students, onStudentClick }) {
-  // Mocking state for demonstration of interactive grading grid
-  const [grades, setGrades] = useState(
-    students.reduce((acc, curr) => {
-      acc[curr.id] = { qz1: 85, qz2: 90, pt1: 88, pt2: 92, exam: 85 };
-      return acc;
-    }, {})
-  );
+const defaultComponents = [
+  { id: 'quizzes', label: 'Quizzes', weight: 30, assessments: [{ id: 'quiz-1', label: 'Quiz 1' }] },
+  { id: 'summative', label: 'Summative Tests', weight: 50, assessments: [{ id: 'summative-1', label: 'Summative 1' }] },
+  { id: 'periodic', label: 'Periodic Tests', weight: 20, assessments: [{ id: 'periodic-1', label: 'Periodic 1' }] },
+];
 
-  const calculateGrade = (studentGrades) => {
-    const quizAvg = (studentGrades.qz1 + studentGrades.qz2) / 2;
-    const ptAvg = (studentGrades.pt1 + studentGrades.pt2) / 2;
-    const exam = studentGrades.exam;
-    
-    // Example Weights: Quizzes 30%, PT 50%, Exams 20%
-    const final = (quizAvg * 0.30) + (ptAvg * 0.50) + (exam * 0.20);
-    return Math.round(final);
-  };
+function transmuteGrade(initialGrade) {
+  const grade = Math.max(0, Math.min(100, Number(initialGrade) || 0));
+  if (grade >= 100) return 100;
+  if (grade >= 60) return Math.floor((grade - 60) / 1.6) + 75;
+  return Math.floor(grade / 4) + 60;
+}
 
-  const handleGradeChange = (studentId, field, value) => {
-    setGrades(prev => ({
-      ...prev,
-      [studentId]: {
-        ...prev[studentId],
-        [field]: Number(value) || 0
-      }
+export default function GradingModule({ students, onStudentClick, classKey = '10-rizal-math', schoolYear = '2026-2027', quarter = 1, subject = 'Unspecified' }) {
+  const [components, setComponents] = useState(defaultComponents);
+  const [passingGrade, setPassingGrade] = useState(75);
+  const [manualOverall, setManualOverall] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [grades, setGrades] = useState({});
+  const [error, setError] = useState('');
+  const [changeReason, setChangeReason] = useState('');
+  const [audit, setAudit] = useState([]);
+
+  useEffect(() => {
+    api.get(`/gradebook/${encodeURIComponent(classKey)}`).then((book) => {
+      if (!book.components.length) return;
+      const groups = new Map();
+      let hasManual = false;
+      let manualId = null;
+      book.components.forEach((item) => {
+        if (item.category === 'Manual Overall') { hasManual = true; manualId = item.id; return; }
+        const group = groups.get(item.category) || { id: item.category.toLowerCase().replace(/[^a-z0-9]+/g, '-'), label: item.category, weight: 0, assessments: [] };
+        group.weight += Number(item.weight);
+        group.assessments.push({ id: item.id, label: item.label });
+        groups.set(item.category, group);
+      });
+      const loadedScores = Object.fromEntries(Object.entries(book.scores || {}).map(([personId, scoreMap]) => [personId, {
+        ...scoreMap, ...(manualId && scoreMap[manualId] !== undefined ? { manualOverall: scoreMap[manualId] } : {}),
+      }]));
+      setComponents([...groups.values()]); setPassingGrade(book.passing_grade || 75); setManualOverall(hasManual); setGrades(loadedScores);
+    }).catch((err) => setError(err.message));
+    api.get(`/gradebook/${encodeURIComponent(classKey)}/audit`).then(setAudit).catch(() => setAudit([]));
+  }, [classKey]);
+
+  const weightTotal = useMemo(() => components.reduce((sum, item) => sum + Number(item.weight), 0), [components]);
+  const assessmentCount = components.reduce((sum, item) => sum + item.assessments.length, 0);
+
+  const addAssessment = (componentId) => {
+    setComponents((current) => current.map((component) => {
+      if (component.id !== componentId) return component;
+      const count = component.assessments.length + 1;
+      const prefix = { quizzes: 'Quiz', summative: 'Summative Test', periodic: 'Periodic Test' }[componentId] || component.label;
+      return { ...component, assessments: [...component.assessments, { id: `${componentId}-${crypto.randomUUID()}`, label: `${prefix} ${count}` }] };
     }));
   };
 
-  return (
-    <div className="card animate-fade-in">
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
-        <h2 style={{ fontSize: '18px', margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <Calculator size={20} color="var(--accent-blue)" /> Interactive Grading Sheet
-        </h2>
-        <button className="btn-primary" style={{ padding: '8px 16px', fontSize: '14px', gap: '8px', display: 'flex', alignItems: 'center' }}>
-          <Save size={16} /> Save to Database
-        </button>
-      </div>
+  const addOverall = () => setManualOverall((value) => !value);
+  const updateScore = (studentId, field, value) => setGrades((current) => ({ ...current, [studentId]: { ...current[studentId], [field]: value } }));
+  const updateComponent = (componentId, field, value) => setComponents((current) => current.map((item) => item.id === componentId ? { ...item, [field]: value } : item));
+  const removeAssessment = (componentId, assessmentId) => setComponents((current) => current.map((component) => component.id === componentId ? { ...component, assessments: component.assessments.filter((item) => item.id !== assessmentId) } : component));
 
-      <div style={{ overflowX: 'auto' }}>
-        <table className="interactive-table" style={{ minWidth: '800px' }}>
-          <thead>
-            <tr>
-              <th rowSpan="2" style={{ borderRight: '1px solid var(--border-color)', minWidth: '200px' }}>Student Name</th>
-              <th colSpan="2" style={{ textAlign: 'center', borderRight: '1px solid var(--border-color)', borderBottom: '1px solid var(--border-color)' }}>Quizzes (30%)</th>
-              <th colSpan="2" style={{ textAlign: 'center', borderRight: '1px solid var(--border-color)', borderBottom: '1px solid var(--border-color)' }}>Performance Tasks (50%)</th>
-              <th style={{ textAlign: 'center', borderRight: '1px solid var(--border-color)', borderBottom: '1px solid var(--border-color)' }}>Quarterly Exam (20%)</th>
-              <th rowSpan="2" style={{ textAlign: 'center' }}>Tentative Grade</th>
-            </tr>
-            <tr>
-              <th>Qz 1</th>
-              <th style={{ borderRight: '1px solid var(--border-color)' }}>Qz 2</th>
-              <th>PT 1</th>
-              <th style={{ borderRight: '1px solid var(--border-color)' }}>PT 2</th>
-              <th style={{ borderRight: '1px solid var(--border-color)' }}>Exam</th>
-            </tr>
-          </thead>
-          <tbody>
-            {students.map(student => {
-              const studentGrades = grades[student.id];
-              const finalGrade = calculateGrade(studentGrades);
-              return (
-                <tr key={student.id}>
-                  <td style={{ fontWeight: 500, color: 'var(--text-primary)', cursor: 'pointer', borderRight: '1px solid var(--border-color)' }} onClick={() => onStudentClick(student)}>
-                    {student.name}
-                  </td>
-                  <td><input type="number" min="0" max="100" value={studentGrades.qz1} onChange={e => handleGradeChange(student.id, 'qz1', e.target.value)} className="input-field" style={{ width: '70px', padding: '4px 8px', textAlign: 'center' }} /></td>
-                  <td style={{ borderRight: '1px solid var(--border-color)' }}><input type="number" min="0" max="100" value={studentGrades.qz2} onChange={e => handleGradeChange(student.id, 'qz2', e.target.value)} className="input-field" style={{ width: '70px', padding: '4px 8px', textAlign: 'center' }} /></td>
-                  <td><input type="number" min="0" max="100" value={studentGrades.pt1} onChange={e => handleGradeChange(student.id, 'pt1', e.target.value)} className="input-field" style={{ width: '70px', padding: '4px 8px', textAlign: 'center' }} /></td>
-                  <td style={{ borderRight: '1px solid var(--border-color)' }}><input type="number" min="0" max="100" value={studentGrades.pt2} onChange={e => handleGradeChange(student.id, 'pt2', e.target.value)} className="input-field" style={{ width: '70px', padding: '4px 8px', textAlign: 'center' }} /></td>
-                  <td style={{ borderRight: '1px solid var(--border-color)', textAlign: 'center' }}><input type="number" min="0" max="100" value={studentGrades.exam} onChange={e => handleGradeChange(student.id, 'exam', e.target.value)} className="input-field" style={{ width: '70px', padding: '4px 8px', textAlign: 'center' }} /></td>
-                  <td style={{ textAlign: 'center', fontWeight: 'bold', fontSize: '18px', color: finalGrade < 75 ? 'var(--danger)' : 'var(--success)' }}>
-                    {finalGrade}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
+  const calculate = (studentId) => {
+    const studentGrades = grades[studentId] || {};
+    if (manualOverall && studentGrades.manualOverall !== '' && studentGrades.manualOverall !== undefined) {
+      const initial = Number(studentGrades.manualOverall) || 0;
+      return { initial, transmuted: transmuteGrade(initial), manual: true };
+    }
+    if (weightTotal !== 100) return { initial: null, transmuted: null, manual: false };
+    const initial = components.reduce((total, component) => {
+      if (!component.assessments.length) return total;
+      const average = component.assessments.reduce((sum, assessment) => sum + (Number(studentGrades[assessment.id]) || 0), 0) / component.assessments.length;
+      return total + average * (Number(component.weight) / 100);
+    }, 0);
+    return { initial, transmuted: transmuteGrade(initial), manual: false };
+  };
+
+  const saveGradebook = async () => {
+    setError(''); setSaved(false);
+    if (changeReason.trim().length < 8) return setError('Enter a specific grade-change reason of at least 8 characters.');
+    const flat = components.flatMap((component) => component.assessments.map((assessment) => ({
+      id: assessment.id, category: component.label, label: assessment.label,
+      weight: Number(component.weight) / component.assessments.length, max_score: 100,
+    })));
+    if (manualOverall) flat.push({ id: 'manualOverall', category: 'Manual Overall', label: 'Overall Grade', weight: 0, max_score: 100 });
+    try { await api.put(`/gradebook/${encodeURIComponent(classKey)}`, { class_key: classKey, school_year: schoolYear, quarter, subject, change_reason: changeReason.trim(), passing_grade: passingGrade, components: flat, scores: grades }); setSaved(true); setChangeReason(''); setAudit(await api.get(`/gradebook/${encodeURIComponent(classKey)}/audit`)); }
+    catch (err) { setError(err.message); }
+  };
+
+  return (
+    <div className="page-stack">
+      <section className="card-static">
+        <div className="section-heading">
+          <div><p className="eyebrow">Teacher-configurable</p><h2>Grade components & passing rule</h2></div>
+          <Calculator size={24} />
+        </div>
+        <p className="section-copy">Scores are normalized to 100, weighted into an initial grade, then converted using the DepEd transmutation table requested for this capstone. Keep weights at exactly 100%.</p>
+        <div className="component-config-grid">
+          {components.map((component) => (
+            <div className="component-config" key={component.id}>
+              <label><span className="field-label">Component name</span><input className="input-field" value={component.label} onChange={(event) => updateComponent(component.id, 'label', event.target.value)} /></label>
+              <label><span className="field-label">Weight (%)</span><input className="input-field" type="number" min="0" max="100" value={component.weight} onChange={(event) => updateComponent(component.id, 'weight', Number(event.target.value))} /></label>
+            </div>
+          ))}
+          <label className="component-config"><span className="field-label">Passing transmuted grade</span><input className="input-field" type="number" min="60" max="100" value={passingGrade} onChange={(event) => setPassingGrade(Number(event.target.value))} /></label>
+        </div>
+        <div className={`weight-meter ${weightTotal === 100 ? 'weight-valid' : 'weight-invalid'}`}><span style={{ width: `${Math.min(weightTotal, 100)}%` }} /><strong>{weightTotal}% total</strong></div>
+        <div className="action-row component-actions">
+          <button className="btn-secondary" onClick={() => addAssessment('quizzes')}><Plus size={16} /> Add quiz</button>
+          <button className="btn-secondary" onClick={() => addAssessment('summative')}><Plus size={16} /> Add summative test</button>
+          <button className="btn-secondary" onClick={() => addAssessment('periodic')}><Plus size={16} /> Add periodic test</button>
+          <button className={manualOverall ? 'btn-primary' : 'btn-secondary'} onClick={addOverall}><Plus size={16} /> {manualOverall ? 'Manual overall input shown' : 'Add overall grade input'}</button>
+          <input className="input-field" aria-label="Grade change reason" placeholder="Required reason for this grade save" value={changeReason} onChange={(event) => setChangeReason(event.target.value)} />
+          <button className="btn-primary" onClick={saveGradebook} disabled={weightTotal !== 100 || changeReason.trim().length < 8}><Save size={16} /> Save grading setup</button>
+        </div>
+        {saved && <div className="notice notice-success compact-notice"><CheckCircle2 size={17} /> Grading components and scores saved to the database.</div>}
+        {error && <div className="notice notice-danger compact-notice">{error}</div>}
+      </section>
+
+      <section className="card-static">
+        <div className="section-heading"><div><p className="eyebrow">Attributable changes</p><h2>Gradebook audit history</h2></div><History size={22} /></div>
+        <div className="table-scroll"><table className="interactive-table"><thead><tr><th>Date</th><th>School year</th><th>Quarter</th><th>Subject</th><th>Actor</th><th>Reason</th></tr></thead><tbody>{audit.length === 0 && <tr><td colSpan="6" className="empty-cell">No grade changes recorded for this gradebook.</td></tr>}{audit.map((item) => <tr key={item.id}><td>{new Date(item.created_at).toLocaleString('en-PH')}</td><td>{item.school_year}</td><td>{item.quarter}</td><td>{item.subject}</td><td>{item.actor_name}</td><td>{item.reason}</td></tr>)}</tbody></table></div>
+      </section>
+
+      <section className="card-static">
+        <div className="section-heading"><div><p className="eyebrow">{assessmentCount} score input(s) per learner</p><h2>Interactive grading sheet</h2></div></div>
+        <div className="table-scroll">
+          <table className="interactive-table grade-table">
+            <thead>
+              <tr><th rowSpan="2">Student</th>{components.map((component) => <th colSpan={Math.max(component.assessments.length, 1)} key={component.id}>{component.label} ({component.weight}%)</th>)}{manualOverall && <th rowSpan="2">Manual overall</th>}<th rowSpan="2">Initial grade</th><th rowSpan="2">Transmuted grade</th><th rowSpan="2">Result</th></tr>
+              <tr>{components.flatMap((component) => component.assessments.length ? component.assessments.map((assessment) => <th key={assessment.id}><div className="assessment-header">{assessment.label}{component.assessments.length > 1 && <button title="Remove input" onClick={() => removeAssessment(component.id, assessment.id)}><Trash2 size={12} /></button>}</div></th>) : [<th key={`${component.id}-empty`}>No input</th>])}</tr>
+            </thead>
+            <tbody>
+              {students.map((student) => {
+                const result = calculate(student.id);
+                return (
+                  <tr key={student.id}>
+                    <td className="student-cell" onClick={() => onStudentClick?.(student)}><strong>{student.name}</strong><span>{student.id}</span></td>
+                    {components.flatMap((component) => component.assessments.length ? component.assessments.map((assessment) => <td key={assessment.id}><input className="grade-input" type="number" min="0" max="100" value={grades[student.id]?.[assessment.id] ?? ''} onChange={(event) => updateScore(student.id, assessment.id, event.target.value)} /></td>) : [<td key={`${component.id}-empty`}>—</td>])}
+                    {manualOverall && <td><input className="grade-input manual-input" type="number" min="0" max="100" value={grades[student.id]?.manualOverall ?? ''} onChange={(event) => updateScore(student.id, 'manualOverall', event.target.value)} /></td>}
+                    <td><strong>{result.initial === null ? 'Weights ≠ 100' : result.initial.toFixed(2)}</strong>{result.manual && <span className="muted-small">Manual</span>}</td>
+                    <td className="final-grade">{result.transmuted ?? '—'}</td>
+                    <td><span className={`tag ${result.transmuted >= passingGrade ? 'tag-success' : 'tag-danger'}`}>{result.transmuted === null ? 'Pending' : result.transmuted >= passingGrade ? 'Passed' : 'Below rule'}</span></td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section className="card-static">
+        <h2>Transmutation reference</h2>
+        <p className="section-copy">Examples from the requested table: initial 100 → 100; 98.40–99.99 → 99; 60.00–61.59 → 75; 56.00–59.99 → 74; 0–3.99 → 60. This module applies the full piecewise table to every computed initial grade.</p>
+        <a className="text-link" href="https://www.teacherph.com/transmutation-table/" target="_blank" rel="noreferrer">Open the transmutation table source</a>
+      </section>
     </div>
   );
 }

@@ -1,0 +1,463 @@
+EDUSCAN CAPSTONE PROJECT
+RAPID APPLICATION DEVELOPMENT (RAD) PROGRESS REPORT
+
+Project Title:
+EduScan: A Web-Based Facial Recognition System for Automated Attendance and Grading Reports for San Jose National High School
+
+Reporting Period:
+2026-07-23 to 2026-08-17
+
+Prepared For:
+Capstone project progress reporting and group presentation
+
+Methodology:
+Rapid Application Development (RAD)
+
+
+1. PURPOSE OF THIS REPORT
+
+This report documents the actual progress of EduScan according to the four primary stages of the Rapid Application Development methodology:
+
+- Requirements Planning
+- User Design
+- Rapid Construction
+- Cutover
+
+The report distinguishes implemented and tested functions from activities that still require real school deployment, stakeholder approval, hardware testing, or user evaluation. The dates are based on the available Git commit, project files, implementation records, and completed verification work. The original repository contains only one initial batch commit; therefore, later accomplishments are grouped by the dates on which the working system files and verification results were completed.
+
+
+2. PROJECT OBJECTIVES COVERED BY THE RAD PROCESS
+
+- Develop attendance monitoring for students, faculty, and non-teaching personnel.
+- Deliver SMS notifications for time-in, time-out, tardiness, and absence events.
+- Allow teaching staff to encode, manage, and monitor grades per subject.
+- Generate attendance, absence, tardiness, grading, temporary attendance, and official SF2 reports.
+- Prepare the system for ISO 25010 evaluation in functional suitability, performance efficiency, compatibility, usability, and reliability.
+
+
+3. RAD STAGE 1: REQUIREMENTS PLANNING
+
+Status:
+Completed for the current capstone implementation scope. Requirements may still be refined through formal school user acceptance testing.
+
+Purpose of the Stage:
+The group identifies the school problem, project scope, stakeholders, required information, operational rules, legal constraints, and acceptance criteria before construction begins.
+
+Stakeholders Identified:
+
+- School administrators
+- Teachers and class advisers
+- Students
+- Parents or guardians
+- Faculty members
+- Non-teaching personnel
+- Gate security guards
+- School records personnel
+- School Data Protection Officer
+- Capstone researchers and evaluators
+
+Requirements Established:
+
+- A secured laptop and camera will operate as the attendance station at the school gate.
+- Students, faculty, and non-teaching personnel must be supported by the attendance system.
+- A verified face match must create a real attendance event in the local database.
+- Verified matches must alternate between time-in and time-out to support multiple exits and re-entries during the same day.
+- A camera frame may contain more than one face, and each distinct enrolled person must be processed independently.
+- The first arrival may be classified as late using the teacher-defined class schedule and grace period.
+- Teachers and administrators may correct attendance records, but the original gate event must remain available for audit.
+- Daily absence closing must run automatically at the authorized cutoff.
+- Weekends, holidays, suspended classes, special schedules, and excused absences must not be handled as ordinary school days.
+- SMS events must cover time-in, time-out, tardiness, and absence.
+- The intended SMS gateway is a school-controlled Android phone operating on the secured local network.
+- Teachers must be able to configure quizzes, summative tests, periodic tests, overall-grade inputs, weights, and passing rules.
+- Gradebooks must be organized by school year, grading period, quarter, grade level, section, and subject.
+- Every gradebook change must record the responsible user, reason, previous state, new state, and date.
+- Attendance must first be available in a temporary spreadsheet and then transferred into the official SF2 format.
+- Male and female learners must be placed in the correct SF2 row blocks.
+- Learner names must be alphabetically arranged within the appropriate male or female SF2 block.
+- The system must provide administrative maintenance for users, students, employees, grade levels, sections, subjects, and academic periods.
+- Approved school roster spreadsheets must be validated before import.
+- Biometric deletion and complete school-record disposal must be separate actions.
+- Complete disposal must remove linked attendance, correction, grade, SMS, intervention, excused-absence, and biometric records while retaining a non-identifying disposal audit.
+- SQLite and the matching biometric encryption key must be backed up and restored as one protected recovery set.
+- Database changes must be recorded through versioned migrations.
+- Privacy controls must reflect transparency, legitimate purpose, proportionality, safeguards, role-based access, correction procedures, retention, and authorized disposal.
+
+Non-Functional Requirements Established:
+
+- Local processing of facial recognition data
+- Role-based access control
+- Password-protected accounts
+- Encrypted biometric samples and LBPH model files
+- Database referential-integrity checks
+- Auditable attendance and grade changes
+- Reliable local operation during normal school use
+- Recoverable database and encryption-key backups
+- Compatibility with a browser camera, SQLite, official XLSX reports, and an Android SMS gateway
+- Usable administrator, teacher, and scanner interfaces
+
+Requirements Planning Accomplishments:
+
+- [2026-08-14]: The revised capstone manuscript was used to clarify the project objectives, intended users, attendance scope, grading scope, and evaluation criteria.
+- [2026-08-14]: The gate-camera workflow, teacher/admin correction authority, repeated entry and exit rules, SMS triggers, and class-specific tardiness rules were defined.
+- [2026-08-14]: The official SF2 workbook was identified as the required monthly attendance-report output.
+- [2026-08-14]: The Android-phone SMS gateway approach and local-network deployment requirement were established.
+- [2026-08-14]: Privacy, access, retention, correction, disposal, and approval-documentation requirements were consolidated.
+- [2026-08-17]: Backup, disaster recovery, migrations, administrative CRUD, approved roster import, calendar exceptions, and grade-audit requirements were added to the approved construction scope.
+
+Outputs of the Stage:
+
+- Consolidated functional requirements
+- Consolidated non-functional requirements
+- Stakeholder and role definitions
+- Attendance-event and grading rules
+- SF2 mapping requirements
+- Privacy and governance requirements
+- Acceptance and verification targets
+
+Recommended Screenshots for This Stage:
+
+- System Setup > Privacy & legal setup: privacy notice and approval-evidence fields
+- System Setup > Roles & corrections: role matrix and correction procedure
+- System Setup > Attendance rules: authorized absence cutoff and automatic closing option
+- System Setup > Android SMS: SMS events and approved message templates
+
+
+4. RAD STAGE 2: USER DESIGN
+
+Status:
+Completed for the current working interface. Additional refinements may be introduced after formal student, teacher, and staff evaluation.
+
+Purpose of the Stage:
+Users and developers refine the required workflows, screen organization, data entry, outputs, and corrections through rapid interface iterations. In EduScan, the initial frontend interfaces acted as the first design iteration, while subsequent screens were connected to real backend processes and revised based on clarified requirements.
+
+Initial Design Iteration:
+
+- [2026-07-23]: The initial EduScan frontend interfaces were committed as one batch under commit e3fc94c, titled “Initial commit: EduScan Frontend Interfaces.”
+- [2026-07-23]: Initial screens represented the administrator dashboard, attendance, grading, reports, teacher functions, and scanner interface.
+
+User Workflow Design Completed:
+
+- Administrator workflow: sign in, manage system configuration, review attendance, correct records, manage gradebooks, generate reports, manage school data, manage accounts, import rosters, and perform backup or recovery.
+- Teacher workflow: review assigned learners, attendance, truancy interventions, corrections, and grade information within authorized access.
+- Scanner workflow: use a dedicated gate account, enable the local camera, recognize one or more enrolled people, and record alternating time-in and time-out events.
+- Enrollment workflow: create or select an authorized person, verify consent, capture sufficient face samples, train the LBPH model, and retain enrollment audit history.
+- Biometric maintenance workflow: view enrollment details, replace face samples, remove biometric information, and retain a non-biometric change log.
+- Full disposal workflow: select a school record separately from biometric maintenance, enter the authorization reference and reason, confirm the subject identifier, remove linked records, and retain a non-identifying disposal audit.
+- Attendance-correction workflow: compare the raw event with supporting evidence, enter corrected status or time, provide a reason, and preserve the original event.
+- Calendar workflow: record holidays, suspensions, special schedules, and authorized excused absences.
+- Gradebook workflow: select school year, quarter, grade level, section, and subject; configure grade components; enter scores; provide a reason; save; and review grade-change history.
+- SF2 workflow: select the reporting month and class, generate the official workbook, verify sex-specific placement and alphabetical order, and retain the output for records review.
+- Roster workflow: choose an approved XLSX file, enter its approval reference, validate the rows, review errors, and import only after successful validation.
+- Recovery workflow: create an encrypted recovery package, store the passphrase separately, download an off-device copy, verify a backup before restoration, stage the restore, and restart the server to apply it.
+
+Data Design Completed:
+
+- Structured identity, attendance, grading, schedule, calendar, user, audit, and configuration records are stored in SQLite.
+- Biometric samples are stored as encrypted files outside the website’s public directory.
+- SQLite stores the structured metadata that links each encrypted sample to an authorized person.
+- The trained LBPH model is stored as an encrypted file with version and integrity metadata in SQLite.
+- The temporary attendance workbook and official SF2 workbook are generated from validated database records.
+- Backup packages contain the SQLite database, encryption key, face samples, LBPH models, and SF2 templates as one encrypted recovery set.
+
+Process Design Completed:
+
+- Face enrollment to encrypted sample storage to LBPH training
+- Camera frame to multiple-face detection to LBPH comparison to attendance events
+- Attendance event to temporary workbook to reviewed SF2 report
+- Attendance event to SMS outbox to Android gateway
+- Teacher grade input to weighted initial grade to transmuted grade to grade audit
+- Approved roster workbook to validation preview to database import to alphabetical SF2 placement
+- Authorized full disposal to linked-record deletion to anonymous disposal audit
+- Secure backup creation to off-device storage to verified staging to controlled restoration
+
+User Design Accomplishments:
+
+- [2026-08-16]: Login, administrator, teacher, attendance, reporting, scanner, and advisory interfaces were connected to persistent backend records.
+- [2026-08-16]: Attendance correction, SMS outbox, SF2 reporting, and intervention screens were refined around accountable school workflows.
+- [2026-08-17]: The scanner design was updated to explain repeated exits and re-entries and to process multi-face recognition results.
+- [2026-08-17]: The grading screen was reorganized by school year, quarter, grade level, section, and subject and was given a visible grade-audit section.
+- [2026-08-17]: System Setup was expanded with automatic absence closing, calendar exceptions, special schedules, excused absences, biometric maintenance, SMS configuration, privacy documentation, and role guidance.
+- [2026-08-17]: A separate Administration screen was added for people, school records, accounts, academic references, roster import, encrypted backup, restoration, and disposal audit.
+
+Outputs of the Stage:
+
+- Working role-based navigation
+- Completed gate-station workflow
+- Completed attendance-correction workflow
+- Completed grading and grade-audit workflow
+- Completed SF2 reporting workflow
+- Completed administrative-data workflow
+- Completed biometric maintenance and separate school-record disposal workflows
+- Completed backup and restoration workflow
+
+Recommended Screenshots for This Stage:
+
+- Login screen showing role-based access entry
+- Administrator dashboard showing operational summary
+- Scanner screen before camera activation
+- Scanner result area showing multiple recognized-person result cards, captured during an authorized test
+- Attendance screen showing a raw event and correction audit history
+- Grading screen showing school-year, quarter, grade, section, and subject selectors
+- Grading screen showing grade components and grade-change audit history
+- Reports screen showing SF2 configuration and generation controls
+- Administration > People & records showing edit, deactivate, and separate full-disposal actions
+- Administration > Accounts showing user roles and account maintenance
+- Administration > Academic structure showing school years, grading periods, grade levels, sections, and subjects
+- Administration > Roster import showing preview-before-import workflow
+- Administration > Backup & recovery showing encrypted backup and staged restoration controls
+
+
+5. RAD STAGE 3: RAPID CONSTRUCTION
+
+Status:
+Completed for the requested local capstone scope. Hardware and school-wide volume testing remain part of Cutover.
+
+Purpose of the Stage:
+The working system is built through short, testable iterations. Features are connected to real storage and processes instead of remaining static demonstrations.
+
+Construction Iteration 1: Persistent Core System
+
+- [2026-08-16]: A FastAPI backend was added for authentication, people, schedules, attendance, grading, reports, SMS, biometrics, and configuration.
+- [2026-08-16]: SQLAlchemy persistence was configured with SQLite as the default local database.
+- [2026-08-16]: Administrator, teacher, and scanner accounts were connected to token-based authentication and role restrictions.
+- [2026-08-16]: Students, faculty, and non-teaching personnel were represented as persistent person records.
+- [2026-08-16]: Attendance events and authorized corrections were stored separately so the raw gate record would remain unchanged.
+- [2026-08-16]: Teacher-defined class schedules and tardiness grace periods were connected to attendance classification.
+- [2026-08-16]: An SMS outbox and real local Android gateway integration were implemented for time-in, time-out, tardiness, and absence messages.
+- [2026-08-16]: Temporary attendance XLSX and official SF2 XLSX generation were implemented using the supplied official template.
+- [2026-08-16]: Teacher-configurable grading components, weighted scores, passing rules, and the requested transmutation process were connected to stored grade records.
+
+Construction Iteration 2: Working LBPH Biometrics
+
+- [2026-08-16]: OpenCV Haar-based face detection and LBPH training and prediction were implemented on the local backend.
+- [2026-08-16]: Enrollment required multiple quality-checked face crops before model training.
+- [2026-08-16]: Face samples and LBPH model files were encrypted outside the public web directory.
+- [2026-08-16]: SQLite stored structured sample ownership, quality, file path, model version, and integrity metadata.
+- [2026-08-16]: Biometric enrollment creation, replacement, deletion, and audit history were implemented.
+- [2026-08-16]: Biometric deletion was made to remove encrypted samples, sample rows, obsolete model files, and obsolete model records.
+- [2026-08-17]: Recognition was expanded to process up to ten detected faces in one frame and prevent duplicate processing of the same person within that frame.
+
+Construction Iteration 3: Expanded Attendance Rules
+
+- [2026-08-17]: Gate events were changed from a maximum of one time-in and one time-out to alternating time-in and time-out events throughout the day.
+- [2026-08-17]: Duplicate-scan cooldown protection was retained while allowing legitimate later exits and re-entries.
+- [2026-08-17]: Weekends were treated as non-instructional days.
+- [2026-08-17]: Holiday and suspended-class exceptions were added.
+- [2026-08-17]: Special schedules were added with optional start, end, and absence-cutoff times.
+- [2026-08-17]: Authorized excused-absence records were added and given reporting priority over ordinary automatic absence results.
+- [2026-08-17]: A background scheduler was added to close daily absences at the authorized cutoff, generate the temporary attendance workbook, and dispatch queued SMS notices.
+- [2026-08-17]: A controlled manual trigger for the same automatic close process was retained for authorized operational recovery.
+
+Construction Iteration 4: Academic and Grade Accountability
+
+- [2026-08-17]: School-year records were added.
+- [2026-08-17]: Four grading-period or quarter records were added for the active school year.
+- [2026-08-17]: Grade-level, section, and subject reference records were added.
+- [2026-08-17]: Gradebooks were organized by school year, quarter, grade level, section, and subject.
+- [2026-08-17]: Every gradebook save was changed to require a reason and produce an attributable grade-change audit containing the previous and updated gradebook states.
+
+Construction Iteration 5: Administration and School Records
+
+- [2026-08-17]: Administrative account creation, viewing, editing, password reset, activation, and deactivation were implemented.
+- [2026-08-17]: Administrative creation, viewing, editing, activation, and deactivation were implemented for student, faculty, and non-teaching personnel records.
+- [2026-08-17]: CRUD operations were implemented for school years, grading periods, grade levels, sections, and subjects.
+- [2026-08-17]: Personal password change was implemented using current-password verification.
+- [2026-08-17]: Approved XLSX roster parsing, validation preview, import, update matching, file hashing, approval reference, and import audit were implemented.
+- [2026-08-17]: Male and female SF2 lists were explicitly sorted alphabetically before insertion into their official row blocks.
+- [2026-08-17]: Full school-record disposal was implemented separately from biometric deletion.
+- [2026-08-17]: Full disposal was implemented to remove linked attendance events, corrections, excused absences, grade scores, SMS records, interventions, biometric records, and identifying audit entries.
+- [2026-08-17]: A non-identifying disposal reference, removed-record counts, authority, reason, actor, and date were retained for accountability.
+
+Construction Iteration 6: Reliability, Backup, and Database Control
+
+- [2026-08-17]: Versioned startup migrations and the schema_migrations register were implemented instead of relying only on unrecorded automatic table creation.
+- [2026-08-17]: SQLite foreign-key enforcement, write-ahead logging, and a busy timeout were enabled.
+- [2026-08-17]: Secure online SQLite backup was implemented.
+- [2026-08-17]: The SQLite database, biometric encryption key, encrypted samples, LBPH models, and templates were packaged together.
+- [2026-08-17]: Backup packages were encrypted with a user-supplied passphrase and file-level integrity hashes.
+- [2026-08-17]: Restoration was implemented as a two-stage process that verifies and stages the package before the next server restart.
+- [2026-08-17]: The previous live data set was preserved in a timestamped recovery folder when a staged restoration was applied.
+- [2026-08-17]: A disaster-recovery procedure and isolated recovery verification script were completed.
+
+Construction Verification Completed:
+
+- Backend application compilation passed.
+- Six backend integration tests passed.
+- Frontend lint verification passed.
+- Frontend production build passed.
+- Live browser verification found no console errors.
+- Four alternating gate events were tested in this order: Time In, Time Out, Time In, Time Out.
+- Two distinct faces were successfully tested against one active LBPH model in a single recognition operation.
+- Biometric creation, replacement, deletion, model retraining, file cleanup, and audit history were tested.
+- Holiday and excused-absence reporting were tested.
+- Grade-save persistence and grade-change audit creation were tested.
+- Full linked-record disposal was tested.
+- Approved roster validation and import were tested.
+- Alphabetical SF2 placement was tested with learners entered in reverse order.
+- Encrypted backup creation, download, integrity checking, decryption, and restoration staging were tested.
+
+Recommended Screenshots for This Stage:
+
+- System Setup > Face enrollments showing active model version, enrolled-person count, and sample count
+- Face enrollment details showing sample total and biometric audit history
+- Scanner showing the multiple-person recognition result area during an authorized test
+- Attendance showing repeated entry and exit events for the same person
+- System Setup > School calendar exceptions showing holiday, suspension, or special schedule records
+- System Setup > Excused absences showing an authorized excused record
+- Grading showing saved components, scores, transmuted grades, and audit history
+- Administration > People & records showing the full-disposal option and disposal audit section
+- Administration > Academic structure showing the active school year and four quarters
+- Administration > Roster import showing a successful validation result and import audit
+- Generated SF2 workbook showing alphabetically arranged names in the correct male or female block
+- Administration > Backup & recovery showing the encrypted backup list
+
+
+6. RAD STAGE 4: CUTOVER
+
+Status:
+In progress. Local technical cutover has been completed, while school deployment, real-device acceptance, training, and ISO 25010 evaluation remain pending.
+
+Purpose of the Stage:
+The completed build is migrated, tested, documented, deployed to the intended environment, accepted by users, and prepared for normal operation and recovery.
+
+Completed Cutover Activities:
+
+- [2026-08-17]: A pre-upgrade safety copy of the existing SQLite database, encryption key, biometric samples, models, and templates was created before live migration.
+- [2026-08-17]: The live SQLite database was started through migration 0001_initial_versioned_schema.
+- [2026-08-17]: Ten new operational, academic, audit, and administrative tables were verified in the live database.
+- [2026-08-17]: Existing live data remained available after migration: three person records, fifteen biometric samples, and one active LBPH model.
+- [2026-08-17]: The updated backend was restarted successfully at http://127.0.0.1:8000.
+- [2026-08-17]: The updated website was verified successfully at http://127.0.0.1:5174.
+- [2026-08-17]: The live Administration, System Setup, Grading, and Scanner screens were checked without browser console errors.
+- [2026-08-17]: The disaster-recovery verification procedure passed in an isolated temporary environment.
+- [2026-08-17]: The updated system documentation and recovery runbook were completed.
+
+Pending Cutover Activities:
+
+- Obtain final written review and approval of the privacy notice, Privacy Impact Assessment, retention schedule, disposal procedure, and deployment safeguards from the authorized school officials, DPO, records personnel, and applicable DepEd or Schools Division Office authority.
+- Replace all initial passwords and the development secret before processing real school data.
+- Create the first official encrypted production backup using a school-approved passphrase and store a copy off the gate laptop.
+- Load the approved school roster through the validation and import screen.
+- Verify grade levels, sections, subjects, advisers, school-year dates, quarter dates, schedules, and authorized absence cutoffs with the school.
+- Enroll authorized students, faculty, and non-teaching personnel using the approved consent and identity-verification procedure.
+- Conduct an on-site multi-person camera test under actual gate distance, lighting, crowd, angle, and network conditions.
+- Establish an operational response for unknown faces, rejected recognition, duplicate scans, device failure, and manual fallback attendance.
+- Configure the dedicated Android SMS gateway using the school-controlled phone and SIM.
+- Conduct real time-in, time-out, tardiness, absence, retry, and failure-recovery SMS tests with approved test recipients.
+- Verify the official SF2 output with the class adviser and records officer before monthly submission.
+- Train administrators, teachers, scanner operators, guards, records personnel, and support personnel.
+- Conduct formal user acceptance testing with approved participants.
+- Administer the ISO 25010 Likert-scale evaluation for functional suitability, performance efficiency, compatibility, usability, and reliability.
+- Record evaluation results, defects, corrections, user acceptance, and final deployment approval.
+- Perform a full restoration drill on separate test equipment and record the achieved recovery time and recovery point.
+- Configure production HTTPS, device encryption, operating-system accounts, network restrictions, physical security, and monitored backup storage.
+
+Cutover Acceptance Evidence to Collect:
+
+- Signed user acceptance test results
+- Approved privacy and deployment references
+- Participant consent and evaluation records
+- On-site camera accuracy and rejection results
+- Android SMS delivery and failure logs
+- Verified roster-import record
+- Verified SF2 output signed or acknowledged by the responsible school personnel
+- Staff training attendance and operating procedure acknowledgment
+- Backup register and full restoration-drill result
+- ISO 25010 evaluation summary
+- Final defect and corrective-action log
+
+Recommended Screenshots for This Stage:
+
+- API health response showing a working database and active model
+- System Setup showing the enabled LBPH runtime and active model details
+- Administration showing migrated school records
+- Administration > Backup & recovery showing an official encrypted backup after the group creates it
+- Android SMS outbox showing an actual sent test and any controlled retry result
+- Scanner showing an authorized real-device recognition result
+- Attendance showing an actual day’s time-in, exit, re-entry, and final time-out
+- Generated temporary attendance workbook
+- Generated official SF2 workbook reviewed by the adviser or records officer
+- ISO 25010 evaluation form and summarized results after evaluation
+
+
+7. RAD ITERATION AND FEEDBACK RECORD
+
+Iteration 1: Initial Interface Batch
+
+- Date completed: 2026-07-23
+- Result: Initial frontend screens established the intended system modules.
+- Feedback incorporated later: Static interface elements needed persistent backend behavior, real biometric processing, database records, official report output, and role restrictions.
+
+Iteration 2: Requirements and Workflow Refinement
+
+- Date completed: 2026-08-14
+- Result: The manuscript, SF2 template, gate workflow, grading requirements, Android SMS approach, roles, privacy, and correction rules were consolidated.
+- Feedback incorporated later: The system needed practical local operation rather than simulated features.
+
+Iteration 3: Persistent Operational System
+
+- Date completed: 2026-08-16
+- Result: Authentication, SQLite persistence, attendance, corrections, grading, SMS outbox, official reports, and working LBPH enrollment and recognition were connected.
+- Feedback incorporated later: Biometric maintenance required CRUD and audit history; gate scanning required better camera-use handling.
+
+Iteration 4: Expanded School Operations and Administration
+
+- Date completed: 2026-08-17
+- Result: Re-entry handling, multi-face recognition, calendar exceptions, automatic closing, academic organization, grade audit, administration, roster import, separate full disposal, backup, disaster recovery, and migrations were completed.
+- Feedback incorporated: The project now distinguishes biometric-only deletion from complete school-record disposal and provides recovery controls required for practical use.
+
+Iteration 5: School Cutover and Evaluation
+
+- Status: Pending
+- Intended result: Approved school data, real devices, trained users, formal user acceptance, verified SF2 output, and completed ISO 25010 evaluation.
+
+
+8. CHRONOLOGICAL ACCOMPLISHMENT LOG
+
+- [2026-07-23]: Initial EduScan frontend interfaces were committed in one batch.
+- [2026-08-14]: Project objectives and stakeholder workflows were refined using the revised capstone manuscript.
+- [2026-08-14]: Gate attendance, teacher/admin correction, SMS, grading, and official SF2 requirements were defined.
+- [2026-08-14]: Privacy, role-based access, correction, retention, disposal, and school-approval requirements were consolidated.
+- [2026-08-16]: Persistent FastAPI and SQLite backend services were implemented.
+- [2026-08-16]: Role-based authentication for administrator, teacher, and scanner accounts was implemented.
+- [2026-08-16]: Persistent students, faculty, non-teaching personnel, schedules, attendance events, and correction audits were implemented.
+- [2026-08-16]: Local OpenCV face detection and LBPH enrollment, training, and prediction were implemented.
+- [2026-08-16]: Encrypted biometric sample and LBPH model storage were implemented.
+- [2026-08-16]: Android SMS gateway integration and a retryable SMS outbox were implemented.
+- [2026-08-16]: Temporary attendance XLSX and official SF2 XLSX generation were implemented.
+- [2026-08-16]: Persistent teacher-configurable grading and grade transmutation were implemented.
+- [2026-08-16]: Biometric enrollment creation, viewing, replacement, deletion, cleanup, and audit history were implemented.
+- [2026-08-17]: Multiple exits and re-entries were implemented as alternating time-in and time-out events.
+- [2026-08-17]: Recognition of multiple distinct faces in one camera frame was implemented.
+- [2026-08-17]: Weekend, holiday, suspension, special-schedule, and excused-absence handling was implemented.
+- [2026-08-17]: Automatic daily absence closing, temporary-log generation, and SMS dispatch were implemented.
+- [2026-08-17]: School year, grading period, quarter, grade level, section, and subject organization was implemented.
+- [2026-08-17]: Grade-change audit history with a required reason and before/after state was implemented.
+- [2026-08-17]: Administrative maintenance of users, students, employees, and academic references was implemented.
+- [2026-08-17]: Approved XLSX roster validation, import, hashing, and audit history were implemented.
+- [2026-08-17]: Alphabetical learner arrangement within the correct male and female SF2 blocks was implemented.
+- [2026-08-17]: Password-change and account-management screens were implemented.
+- [2026-08-17]: Separate full school-record disposal and non-identifying disposal audit were implemented.
+- [2026-08-17]: Encrypted backup of SQLite, the encryption key, biometric samples, models, and templates was implemented.
+- [2026-08-17]: Integrity-checked two-stage restoration and a tested disaster-recovery procedure were implemented.
+- [2026-08-17]: Versioned database migrations and SQLite reliability settings were implemented.
+- [2026-08-17]: Six backend integration tests, frontend lint, production build, recovery verification, live migration, and browser checks passed.
+
+
+9. CURRENT RAD PHASE SUMMARY
+
+- Requirements Planning: Completed for current scope
+- User Design: Completed for current working interface
+- Rapid Construction: Completed for requested local capstone functions
+- Cutover: In progress
+- Formal School User Acceptance: Pending
+- ISO 25010 Evaluation: Pending
+- Full Production Deployment: Pending final approvals and on-site verification
+
+
+10. CONCLUSION
+
+EduScan has progressed beyond an interface prototype and now operates as a persistent local web application with real LBPH training and prediction, role-based accounts, attendance and correction records, repeated gate events, multiple-face processing, automated absence closing, Android SMS gateway integration, grading and grade audits, official SF2 generation, administrative data management, approved roster import, biometric and school-record disposal controls, encrypted backup and restoration, and versioned database migrations.
+
+Under the RAD methodology, Requirements Planning, User Design, and Rapid Construction have been completed for the current capstone scope. Cutover is actively in progress. The remaining work is primarily institutional approval, approved-data preparation, physical gate testing, real Android SMS validation, user training, formal user acceptance, ISO 25010 evaluation, and production hardening. These remaining activities must be completed and documented before the system can be declared fully deployed at San Jose National High School.

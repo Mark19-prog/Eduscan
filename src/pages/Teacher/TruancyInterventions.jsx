@@ -1,98 +1,20 @@
-import { useState } from 'react';
-import { AlertTriangle, MapPin, Phone, Calendar, Plus } from 'lucide-react';
+import { useCallback, useEffect, useState } from 'react';
+import { AlertTriangle, Phone, Calendar, Plus, X } from 'lucide-react';
+import { api } from '../../api/client';
 
 export default function TruancyInterventions() {
-  const [sardoList] = useState([
-    { 
-      id: '2023-0211', 
-      name: 'Cruz, Jonathan', 
-      absences: 5, 
-      lastAbsence: 'Oct 28, 2026',
-      contact: '+63 912 345 6789',
-      address: 'Poblacion, Malilipot, Albay',
-      logs: [
-        { date: 'Oct 25, 2026', type: 'SMS Warning', note: 'Sent automated SMS to parent regarding 3 consecutive absences.' }
-      ]
-    },
-    { 
-      id: '2023-0418', 
-      name: 'Esteban, Paulo', 
-      absences: 6, 
-      lastAbsence: 'Oct 29, 2026',
-      contact: '+63 998 765 4321',
-      address: 'San Jose, Malilipot, Albay',
-      logs: [
-        { date: 'Oct 20, 2026', type: 'Parent Conference', note: 'Mother visited the school. Discussed financial issues causing absences.' },
-        { date: 'Oct 26, 2026', type: 'Home Visitation', note: 'Conducted home visit with Guidance Counselor. Student promised to return.' }
-      ]
-    }
-  ]);
+  const [students, setStudents] = useState([]);
+  const [selected, setSelected] = useState(null);
+  const [error, setError] = useState('');
+  const load = useCallback(() => api.get('/interventions?days=90&threshold=5').then(setStudents).catch((err) => setError(err.message)), []);
+  useEffect(() => { load(); }, [load]);
+  return <div className="page-stack animate-fade-in"><div className="page-heading"><div><h1><AlertTriangle size={28} /> Truancy interventions</h1><p>Students with at least five authorized absence records in the last 90 days. Intervention notes are attributable database records.</p></div></div>{error && <div className="notice notice-danger">{error}</div>}{students.length === 0 && <div className="card-static empty-state"><AlertTriangle size={32} /><p>No student currently meets the configured five-absence review threshold.</p></div>}{students.map((item) => <section key={item.person.id} className="card-static" style={{ borderLeft: '4px solid var(--danger)' }}><div className="section-heading"><div><h2>{item.person.full_name}</h2><p>{item.person.lrn || item.person.external_id} · Grade {item.person.grade} — {item.person.section}</p></div><span className="tag tag-danger">{item.absence_count} absences</span></div><div className="action-row"><span className="status-inline"><Calendar size={15} /> Last absence: {item.last_absence}</span><span className="status-inline"><Phone size={15} /> {item.person.guardian_phone || 'No guardian phone recorded'}</span><button className="btn-secondary" onClick={() => setSelected(item)}><Plus size={15} /> Log intervention</button></div><h3 className="subheading">Intervention history</h3>{item.logs.length === 0 ? <p className="muted-small">No intervention has been logged.</p> : <div className="table-scroll"><table className="interactive-table"><thead><tr><th>Date</th><th>Type</th><th>Authorized actor</th><th>Note</th></tr></thead><tbody>{item.logs.map((log) => <tr key={log.id}><td>{new Date(log.created_at).toLocaleString('en-PH')}</td><td>{log.intervention_type}</td><td>{log.actor_name}</td><td>{log.note}</td></tr>)}</tbody></table></div>}</section>)}{selected && <InterventionModal student={selected.person} onClose={() => setSelected(null)} onSaved={async () => { setSelected(null); await load(); }} />}</div>;
+}
 
-  return (
-    <div className="animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
-      
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-        <div>
-          <h1 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '12px' }}>
-            <div style={{ width: '48px', height: '48px', borderRadius: '12px', background: 'rgba(220, 38, 38, 0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--danger)' }}>
-              <AlertTriangle size={24} />
-            </div>
-            Truancy Interventions (SARDO)
-          </h1>
-          <p style={{ margin: '8px 0 0 56px', color: 'var(--text-secondary)' }}>Track and manage Students at Risk of Dropping Out (5+ absences).</p>
-        </div>
-      </div>
-
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
-        {sardoList.map(student => (
-          <div key={student.id} className="card" style={{ display: 'flex', gap: '32px', borderLeft: '4px solid var(--danger)' }}>
-            
-            {/* Student Info */}
-            <div style={{ flex: '1', minWidth: '300px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '16px' }}>
-                <div>
-                  <h2 style={{ margin: '0 0 4px 0', fontSize: '20px' }}>{student.name}</h2>
-                  <span style={{ color: 'var(--text-secondary)', fontSize: '13px' }}>ID: {student.id}</span>
-                </div>
-                <span className="tag tag-danger">{student.absences} Consecutive Absences</span>
-              </div>
-              
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', fontSize: '14px', color: 'var(--text-secondary)' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}><Calendar size={16} /> Last Absence: {student.lastAbsence}</div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}><Phone size={16} /> {student.contact}</div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}><MapPin size={16} /> {student.address}</div>
-              </div>
-            </div>
-
-            {/* Intervention Logs */}
-            <div style={{ flex: '2', background: '#f8fafc', borderRadius: '12px', padding: '20px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-                <h3 style={{ margin: 0, fontSize: '16px' }}>Intervention History</h3>
-                <button className="btn-secondary" style={{ padding: '6px 12px', fontSize: '12px', display: 'flex', gap: '6px', alignItems: 'center' }}>
-                  <Plus size={14} /> Log New Intervention
-                </button>
-              </div>
-
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                {student.logs.map((log, index) => (
-                  <div key={index} style={{ background: 'white', padding: '16px', borderRadius: '8px', border: '1px solid var(--border-color)', display: 'flex', gap: '16px' }}>
-                    <div style={{ width: '8px', background: 'var(--secondary-color)', borderRadius: '99px' }}></div>
-                    <div>
-                      <div style={{ display: 'flex', gap: '12px', alignItems: 'center', marginBottom: '4px' }}>
-                        <strong style={{ fontSize: '14px' }}>{log.type}</strong>
-                        <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{log.date}</span>
-                      </div>
-                      <p style={{ margin: 0, fontSize: '13px', color: 'var(--text-secondary)', lineHeight: 1.4 }}>{log.note}</p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-          </div>
-        ))}
-      </div>
-
-    </div>
-  );
+function InterventionModal({ student, onClose, onSaved }) {
+  const [type, setType] = useState('Parent Conference');
+  const [note, setNote] = useState('');
+  const [error, setError] = useState('');
+  const submit = async (event) => { event.preventDefault(); try { await api.post('/interventions', { person_id: student.id, intervention_type: type, note }); await onSaved(); } catch (err) { setError(err.message); } };
+  return <div className="modal-backdrop"><form className="modal-card" onSubmit={submit}><div className="modal-header"><div><p className="eyebrow">Attributable intervention record</p><h2>{student.full_name}</h2></div><button type="button" className="icon-btn" onClick={onClose}><X size={20} /></button></div><label><span className="field-label">Intervention type</span><select className="input-field" value={type} onChange={(e) => setType(e.target.value)}><option>Parent Conference</option><option>Home Visitation</option><option>Guidance Referral</option><option>Written Notice</option><option>Other Follow-up</option></select></label><label><span className="field-label">Factual notes and outcome</span><textarea className="text-area" value={note} onChange={(e) => setNote(e.target.value)} /></label>{error && <p className="error-text">{error}</p>}<div className="modal-actions"><button type="button" className="btn-secondary" onClick={onClose}>Cancel</button><button className="btn-primary">Save intervention log</button></div></form></div>;
 }

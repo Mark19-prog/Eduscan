@@ -1,5 +1,6 @@
 import { Outlet, NavLink } from 'react-router-dom';
-import { Search, Bell, Settings, User, LayoutDashboard, Users, FileSpreadsheet, FileText, Camera } from 'lucide-react';
+import { Search, Bell, Settings, LogOut, LayoutDashboard, Users, FileSpreadsheet, FileText, Camera, SlidersHorizontal, Database } from 'lucide-react';
+import { auth } from '../api/client';
 
 export default function AdminLayout() {
   return (
@@ -50,6 +51,12 @@ export default function AdminLayout() {
           <NavLink to="/dashboard/reports" className={({isActive}) => isActive ? 'nav-link active' : 'nav-link'}>
             <FileText size={16} /> <span className="nav-text">SF2 Reports</span>
           </NavLink>
+          <NavLink to="/dashboard/setup" className={({isActive}) => isActive ? 'nav-link active' : 'nav-link'}>
+            <SlidersHorizontal size={16} /> <span className="nav-text">System Setup</span>
+          </NavLink>
+          <NavLink to="/dashboard/administration" className={({isActive}) => isActive ? 'nav-link active' : 'nav-link'}>
+            <Database size={16} /> <span className="nav-text">Administration</span>
+          </NavLink>
         </nav>
 
         {/* Right Actions */}
@@ -68,18 +75,16 @@ export default function AdminLayout() {
           </div>
           
           <div style={{ display: 'flex', gap: '8px' }}>
-            <button className="icon-btn">
+            <NavLink to="/dashboard/setup" className="icon-btn" aria-label="System setup">
               <Settings size={20} />
-            </button>
+            </NavLink>
             <button className="icon-btn" style={{ position: 'relative' }}>
               <Bell size={20} />
               <span style={{ position: 'absolute', top: '8px', right: '10px', width: '8px', height: '8px', background: 'var(--secondary-color)', borderRadius: '50%', border: '2px solid white' }}></span>
             </button>
           </div>
           
-          <div style={{ width: '42px', height: '42px', borderRadius: '50%', background: 'linear-gradient(135deg, var(--accent-light), #d0ebff)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', border: '2px solid white', boxShadow: '0 2px 8px rgba(0,0,0,0.05)', transition: 'transform 0.2s' }} onMouseOver={e => e.currentTarget.style.transform = 'scale(1.05)'} onMouseOut={e => e.currentTarget.style.transform = 'scale(1)'}>
-            <User size={20} color="var(--accent-blue)" />
-          </div>
+          <button className="icon-btn" title="Sign out" onClick={() => { auth.clear(); window.location.href = '/login'; }}><LogOut size={20} /></button>
         </div>
       </header>
 

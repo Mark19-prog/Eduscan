@@ -1,6 +1,9 @@
 import { Users, Clock, FileSpreadsheet } from 'lucide-react';
 
-export default function AdviserAnalyticsWidget() {
+export default function AdviserAnalyticsWidget({ students = [] }) {
+  const present = students.filter((student) => student.timeIn).length;
+  const rate = students.length ? Math.round(present / students.length * 100) : 0;
+  const pending = students.filter((student) => student.status === 'No scan').length;
   return (
     <div style={{ display: 'flex', gap: '24px', flexWrap: 'wrap' }}>
       
@@ -9,7 +12,7 @@ export default function AdviserAnalyticsWidget() {
           <Users size={28} />
         </div>
         <div>
-          <h3 style={{ margin: 0, fontSize: '28px', color: 'var(--text-primary)' }}>92%</h3>
+          <h3 style={{ margin: 0, fontSize: '28px', color: 'var(--text-primary)' }}>{rate}%</h3>
           <span style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>Today's Attendance Rate</span>
         </div>
       </div>
@@ -19,7 +22,7 @@ export default function AdviserAnalyticsWidget() {
           <Clock size={28} />
         </div>
         <div>
-          <h3 style={{ margin: 0, fontSize: '28px', color: 'var(--text-primary)' }}>4</h3>
+          <h3 style={{ margin: 0, fontSize: '28px', color: 'var(--text-primary)' }}>{students.filter((student) => student.status === 'Late').length}</h3>
           <span style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>Tardy Students Today</span>
         </div>
       </div>
@@ -29,8 +32,8 @@ export default function AdviserAnalyticsWidget() {
           <FileSpreadsheet size={28} />
         </div>
         <div>
-          <h3 style={{ margin: 0, fontSize: '28px', color: 'var(--text-primary)' }}>2 / 6</h3>
-          <span style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>Subjects Graded (Q1)</span>
+          <h3 style={{ margin: 0, fontSize: '28px', color: 'var(--text-primary)' }}>{pending}</h3>
+          <span style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>Pending Gate Records</span>
         </div>
       </div>
 

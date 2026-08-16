@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Lock, User, ShieldCheck, AlertCircle } from 'lucide-react';
+import { Lock, User, AlertCircle } from 'lucide-react';
+import { api, auth } from '../../api/client';
 
 export default function Login() {
   const navigate = useNavigate();
@@ -8,17 +9,17 @@ export default function Login() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
 
-  const handleLogin = (e) => {
+  const [busy, setBusy] = useState(false);
+
+  const handleLogin = async (e) => {
     e.preventDefault();
-    if (username === 'admin' && password === 'admin123') {
-      localStorage.setItem('userRole', 'admin');
-      navigate('/dashboard');
-    } else if (username === 'teacher' && password === 'teacher123') {
-      localStorage.setItem('userRole', 'teacher');
-      navigate('/teacher');
-    } else {
-      setError('Invalid username or password.');
-    }
+    setError(''); setBusy(true);
+    try {
+      const result = await api.post('/auth/login', { username, password });
+      auth.save(result);
+      navigate(result.role === 'admin' ? '/dashboard' : result.role === 'teacher' ? '/teacher' : '/scanner');
+    } catch (err) { setError(err.message); }
+    finally { setBusy(false); }
   };
 
   return (
@@ -82,13 +83,16 @@ export default function Login() {
           <p style={{ color: 'var(--text-secondary)', marginBottom: '16px' }}>Please enter your administrative credentials.</p>
           
           <div style={{ background: '#f8fafc', border: '1px solid var(--border-color)', borderRadius: '8px', padding: '16px', marginBottom: '32px', fontSize: '13px', color: 'var(--text-secondary)' }}>
-            <strong style={{ display: 'block', marginBottom: '8px', color: 'var(--text-primary)' }}>Demo Credentials:</strong>
+            <strong style={{ display: 'block', marginBottom: '8px', color: 'var(--text-primary)' }}>Initial local accounts (change before deployment):</strong>
             <div style={{ display: 'flex', gap: '24px' }}>
               <div>
                 <span style={{ display: 'block' }}>Admin: <strong>admin</strong> / <strong>admin123</strong></span>
               </div>
               <div>
                 <span style={{ display: 'block' }}>Teacher: <strong>teacher</strong> / <strong>teacher123</strong></span>
+              </div>
+              <div>
+                <span style={{ display: 'block' }}>Scanner: <strong>scanner</strong> / <strong>scanner123</strong></span>
               </div>
             </div>
           </div>
@@ -115,8 +119,8 @@ export default function Login() {
               </div>
             </div>
 
-            <button type="submit" className="btn-primary" style={{ marginTop: '8px', padding: '14px' }}>
-              Login to Dashboard
+            <button type="submit" className="btn-primary" disabled={busy} style={{ marginTop: '8px', padding: '14px' }}>
+              {busy ? 'Signing in…' : 'Login to EduScan'}
             </button>
           </form>
         </div>

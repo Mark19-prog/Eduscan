@@ -1,74 +1,106 @@
-# EduScan 🎓👁️
-**Automated Biometric Attendance & Grade Management System**
+# EduScan
 
-EduScan is a modern, web-based platform designed specifically for San Jose National High School. It leverages facial recognition technology (Local Binary Pattern Histogram - LBPH) to automate student ingress logging and provides robust administrative and teacher dashboards to manage attendance, truancy, and grades efficiently.
+EduScan is the working local-first attendance, SMS, grading, and SF2 reporting system for San Jose National High School. It uses a browser camera and an OpenCV LBPH model on the school server; biometric frames are not sent to a cloud recognition provider.
 
----
+## Implemented system
 
-## 🌟 Key Features
+- Actual camera capture for enrollment and gate recognition
+- OpenCV Haar face extraction and LBPH training/prediction
+- Minimum-quality and one-face-only enrollment checks
+- Encrypted biometric samples and models outside the web root; versioned LBPH models with SHA-256 integrity records
+- Audited biometric CRUD; deletion purges encrypted samples, sample rows, obsolete LBPH files, and obsolete model rows while retaining only the required non-biometric audit record
+- Persistent SQLAlchemy database (SQLite by default; MySQL supported through `DATABASE_URL`)
+- Student, faculty, and non-teaching personnel attendance
+- Verified matches alternate between time-in and time-out throughout the day, supporting repeated exits and re-entries
+- Multi-face gate frames are detected and each distinct enrolled person is matched independently
+- Teacher-defined schedules and tardiness grace periods
+- Holidays, suspensions, weekends, excused absences, and authorized special schedules
+- Automatic daily absence closing, temporary XLSX generation, and SMS dispatch at the authorized cutoff
+- Immutable gate events plus attributable teacher/admin correction records
+- Real Android SMS Gateway local-server integration for time-in, time-out, tardiness, and absence notices
+- Encrypted gateway password storage and retryable SMS outbox
+- Teacher-configurable quizzes, summative tests, periodic tests, overall grade input, and DepEd transmutation display
+- School-year, grading-period, quarter, subject, grade-level, and section organization with grade-change audit history
+- Administrative CRUD for accounts, students, employees, grade levels, sections, and subjects
+- Approved XLSX roster preview/import plus alphabetically arranged male/female SF2 placement
+- Separate full school-record disposal with an attributable, non-identifying disposal audit
+- Passphrase-encrypted backup/restoration of SQLite, its encryption key, biometric artifacts, models, and templates
+- Recorded database migrations and tested disaster-recovery procedure
+- Real temporary attendance XLSX and official SF2 XLSX generation using the supplied template and sex-specific row blocks
+- Privacy notice, access matrix, correction procedure, retention process, and deployment evidence register under System Setup
 
-### 📷 1. Automated Facial Recognition Ingress (Scanner)
-- **Live Camera Feed**: Captures student faces at the school gates.
-- **Real-Time Verification**: Instantly logs "Time In" and flags students against the database.
-- **SMS Dispatch Integration**: Automatically notifies parents/guardians when a student successfully enters the premises.
-- **Student Enrollment UI**: Captures a 30-frame dataset directly from the web interface to train the LBPH facial recognition model.
+## Install
 
-### 🛡️ 2. Administrative Dashboard
-- **Attendance Analytics**: View daily, weekly, and monthly ingress statistics.
-- **Quarterly Gatekeepers**: Administrators can "Lock" and "Unlock" grading portals across the entire school to enforce deadlines.
-- **Consolidated Master List**: Generate and export official DepEd Form 137 (Permanent Records) and Report Cards.
-- **Audit Trails**: Security logs that track any manual grade overrides by administrators.
+Requirements: Windows, Python 3.12, Node.js/npm, a webcam, and optionally MySQL plus a dedicated Android phone for SMS.
 
-### 👩‍🏫 3. Teacher Portal (SF2 & Grading)
-- **Daily SF2 Log**: Teachers can view the automated gate scans and apply manual overrides (e.g., changing "Present" to "Cutting Classes"). Includes DepEd specific remark codes (Illness, Family Problem, etc.).
-- **Interactive Grading Module**: A built-in spreadsheet that computes tentative grades locally (Quizzes, Performance Tasks, Exams) before syncing to the database.
-- **Truancy Interventions (SARDO)**: Automatically flags students with 5+ consecutive absences and provides a comprehensive logging system for Home Visitations and Parent Conferences.
-- **Monthly SF2 Export**: Automatically compiles daily logs into the official DepEd SF2 CSV format via a Python Pandas backend script.
+From PowerShell in the project directory:
 
----
+```powershell
+.\scripts\setup.ps1 -Sf2Template "C:\path\to\School Form 2 (SF2) Daily Attendance Report of Learners.xlsx"
+```
 
-## 🛠️ Technology Stack
+The setup creates `backend/.venv`, installs the backend and frontend dependencies, creates `backend/.env`, and optionally copies the official SF2 workbook.
 
-**Frontend Interface:**
-- React (Vite)
-- Vanilla CSS (Custom Design System, Glassmorphism, Micro-animations)
-- Lucide React (Iconography)
-- React Router (Role-based Navigation)
+Review `backend/.env` before deployment. Change `EDUSCAN_SECRET_KEY`, keep the generated encryption key backed up securely, set allowed origins, and configure either SQLite or MySQL. Example MySQL URL:
 
-**Planned Backend Architecture (In Progress):**
-- Python / FastAPI
-- OpenCV / LBPH Algorithm (Facial Recognition)
-- Pandas (Data Aggregation & Export)
-- MySQL Database
+```text
+DATABASE_URL=mysql+pymysql://eduscan:strong-password@127.0.0.1:3306/eduscan?charset=utf8mb4
+```
 
----
+Create the MySQL database and restricted application account first. Versioned startup migrations record every applied schema revision in `schema_migrations`. SQLite creates `backend/data/eduscan.db` automatically and is suitable for one local capstone gate station.
 
-## 🚀 Getting Started (Development)
+## Run
 
-To run the frontend interface locally:
+```powershell
+.\scripts\start.ps1
+```
 
-1. **Install Dependencies**
-   ```bash
-   npm install
-   ```
+- Web application: `http://127.0.0.1:5174`
+- API health: `http://127.0.0.1:8000/api/health`
+- API documentation: `http://127.0.0.1:8000/docs`
+- Logs: `logs/`
 
-2. **Start the Development Server**
-   ```bash
-   npm run dev
-   ```
+Initial local accounts (change before real deployment):
 
-3. **Demo Credentials**
-   Navigate to `http://localhost:5173`
-   - **Admin Portal**: `admin` / `admin123`
-   - **Teacher Portal**: `teacher` / `teacher123`
+- Administrator: `admin` / `admin123`
+- Teacher: `teacher` / `teacher123`
+- Gate scanner: `scanner` / `scanner123`
 
----
+## First-use sequence
 
-## 📸 Screenshots & Previews
+1. Log in as administrator.
+2. In System Setup, create each grade/section class schedule and set the late grace period.
+3. In System Setup > Android SMS, enter the phone gateway URL/credentials, save, and send a test message.
+4. Open Gate Station > Enroll person. Enter the official identity/roster fields, confirm the documented authorization, capture 20 frames, and save/train.
+5. Enroll every authorized student/personnel member. The model is retrained after each enrollment.
+6. Log in with the scanner account on the secured gate laptop, enable the camera, and start recognition.
+7. Review Attendance and make corrections with reasons. The server closes absences automatically at the authorized cutoff; administrators can run the same controlled action manually for operational recovery.
+8. Upload the official SF2 template in Reports if it was not supplied during setup, then generate and verify the monthly workbook.
+9. Open Administration to configure academic references, accounts, approved roster imports, and the encrypted backup schedule.
 
-The UI emphasizes a clean, premium, and highly responsive user experience. 
-*(Add screenshots of the Admin Dashboard, Teacher Dashboard, and Scanner here)*
+## Verification
 
----
+```powershell
+npm run verify
+.\backend\.venv\Scripts\python.exe -m unittest discover -s backend\tests -v
+```
 
-*Designed and Built for San Jose National High School.*
+The backend test creates an isolated temporary SQLite database and biometric file area. It verifies biometric CRUD and cleanup, real multi-person LBPH prediction, repeated entry/exit events, calendar exceptions, excused absences, grade audit, complete linked-record disposal, approved roster import, alphabetical SF2 placement, and encrypted backup/restore staging. Camera hardware and Android SMS delivery still require their real devices.
+
+The tested recovery runbook is in `docs/DISASTER_RECOVERY.md`. Its isolated verification command is:
+
+```powershell
+.\scripts\test-disaster-recovery.ps1
+```
+
+## Android phone SMS gateway
+
+Use [SMS Gateway for Android](https://github.com/capcom6/android-sms-gateway) in Local Server mode. Keep the phone and EduScan server on the same protected school network. The backend sends HTTP Basic-authenticated `POST /message` requests to the phone. Do not expose the gateway directly to the internet. Use a school-controlled SIM, confirm the carrier plan permits the intended institutional messages, reserve the phone IP, enable kiosk/battery-exemption settings, and monitor the outbox.
+
+## Biometric storage
+
+LBPH does not produce a reusable single face vector suitable for a document column. EduScan stores quality-checked grayscale face crops as individually Fernet-encrypted files under `backend/data/biometrics`, and stores paths, hashes, consent state, and model metadata in SQL. The trained LBPH YAML is also Fernet-encrypted under `backend/data/models` and is decrypted only to a short-lived local file while OpenCV loads it. This keeps structured records in SQL while treating biometric artifacts as encrypted files. Back up `backend/data/.encryption_key` securely; losing it makes the samples and models unreadable.
+
+## Deployment responsibility
+
+The code keeps biometric operation available for controlled development and technical evaluation. Before processing real students at the gate, complete the System Setup evidence register and obtain the written determination required by the school DPO, records officer, Schools Division Office/DepEd, and applicable Philippine privacy/AI rules. A software checkbox cannot substitute for those approvals.

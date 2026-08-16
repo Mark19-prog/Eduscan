@@ -15,6 +15,13 @@ import Reports from './pages/Reports/Reports';
 import SF2Dashboard from './pages/Teacher/SF2Dashboard';
 import TruancyInterventions from './pages/Teacher/TruancyInterventions';
 import MyAdvisory from './pages/Teacher/MyAdvisory';
+import SystemSetup from './pages/Setup/SystemSetup';
+import Administration from './pages/Administration/Administration';
+import { auth } from './api/client';
+
+function RoleGuard({ roles, children }) {
+  return auth.token() && roles.includes(auth.role()) ? children : <Navigate to="/login" replace />;
+}
 
 function App() {
   return (
@@ -24,22 +31,25 @@ function App() {
         <Route element={<PublicLayout />}>
           <Route path="/" element={<Navigate to="/login" replace />} />
           <Route path="/login" element={<Login />} />
-          <Route path="/scanner" element={<Scanner />} />
+          <Route path="/scanner" element={<RoleGuard roles={['admin', 'scanner']}><Scanner /></RoleGuard>} />
         </Route>
 
         {/* Protected Routes (Authentication required in a real app) */}
-        <Route path="/dashboard" element={<AdminLayout />}>
+        <Route path="/dashboard" element={<RoleGuard roles={['admin']}><AdminLayout /></RoleGuard>}>
           <Route index element={<Dashboard />} />
           <Route path="attendance" element={<Attendance />} />
           <Route path="grading" element={<Grading />} />
           <Route path="reports" element={<Reports />} />
+          <Route path="setup" element={<SystemSetup />} />
+          <Route path="administration" element={<Administration />} />
         </Route>
 
         {/* Teacher Routes */}
-        <Route path="/teacher" element={<TeacherLayout />}>
+        <Route path="/teacher" element={<RoleGuard roles={['teacher']}><TeacherLayout /></RoleGuard>}>
           <Route index element={<SF2Dashboard />} />
           <Route path="truancy" element={<TruancyInterventions />} />
           <Route path="roster" element={<MyAdvisory />} />
+          <Route path="attendance" element={<Attendance />} />
         </Route>
 
         {/* Fallback route */}

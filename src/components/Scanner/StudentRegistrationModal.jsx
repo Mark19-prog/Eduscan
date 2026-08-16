@@ -1,128 +1,103 @@
-import { useState, useEffect } from 'react';
-import { X, Camera, ScanFace, CheckCircle, Database } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { X, Camera, ScanFace, CheckCircle, Database, AlertTriangle } from 'lucide-react';
+import { api, captureVideoFrame } from '../../api/client';
 
-export default function StudentRegistrationModal({ onClose }) {
-  const [captureProgress, setCaptureProgress] = useState(0);
+const targetFrames = 20;
+
+export default function StudentRegistrationModal({ onClose, onSaved, person = null }) {
+  const isReplacement = Boolean(person?.person_id);
+  const videoRef = useRef(null);
+  const streamRef = useRef(null);
+  const [frames, setFrames] = useState([]);
+  const [cameraOn, setCameraOn] = useState(false);
   const [isCapturing, setIsCapturing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
+  const [personId, setPersonId] = useState(person?.person_id || null);
+  const [form, setForm] = useState({ external_id: '', lrn: '', full_name: '', sex: 'Male', role: 'Student', grade: '10', section: 'Rizal', assignment: '', guardian_phone: '', biometric_consent: false });
+  const [changeReason, setChangeReason] = useState('');
 
-  // Simulate LBPH image dataset collection (30 frames)
-  useEffect(() => {
-    let interval;
-    if (isCapturing) {
-      interval = setInterval(() => {
-        setCaptureProgress(prev => {
-          if (prev >= 100) {
-            clearInterval(interval);
-            setIsCapturing(false);
-            return 100;
-          }
-          return prev + (100 / 30); // Simulate 30 captures
-        });
-      }, 100); // 100ms per frame
-    }
-    return () => clearInterval(interval);
-  }, [isCapturing]);
+  useEffect(() => () => streamRef.current?.getTracks().forEach((track) => track.stop()), []);
+  const patch = (field, value) => setForm((current) => ({ ...current, [field]: value }));
 
-  const handleStartCapture = (e) => {
-    e.preventDefault();
-    setCaptureProgress(0);
-    setIsCapturing(true);
+  const startCamera = async () => {
+    setError('');
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width: { ideal: 960 }, height: { ideal: 720 } }, audio: false });
+      streamRef.current = stream;
+      videoRef.current.srcObject = stream;
+      await videoRef.current.play();
+      setCameraOn(true);
+    } catch (err) { setError(`Camera could not start: ${err.message}`); }
+  };
+
+  const captureDataset = async () => {
+    setError(''); setNotice(''); setFrames([]); setIsCapturing(true);
+    const collected = [];
+    try {
+      for (let index = 0; index < targetFrames; index += 1) {
+        collected.push(await captureVideoFrame(videoRef.current, 0.92));
+        setFrames([...collected]);
+        await new Promise((resolve) => window.setTimeout(resolve, 220));
+      }
+      setNotice(`${collected.length} real camera frames captured. The server will quality-check each face before training.`);
+    } catch (err) { setError(err.message); }
+    finally { setIsCapturing(false); }
+  };
+
+  const saveAndTrain = async () => {
+    if (!(isReplacement ? person.biometric_consent : form.biometric_consent)) return setError('Confirm the documented consent/authorization before biometric enrollment.');
+    if (isReplacement && changeReason.trim().length < 8) return setError('Enter a specific re-enrollment reason of at least 8 characters.');
+    if (frames.length < targetFrames) return setError(`Capture all ${targetFrames} camera frames first.`);
+    setSaving(true); setError('');
+    try {
+      let id = personId;
+      if (!id) {
+        const payload = { ...form, lrn: form.lrn || null, guardian_phone: form.guardian_phone || null, grade: form.role === 'Student' ? form.grade : null, section: form.role === 'Student' ? form.section : null, assignment: form.role === 'Student' ? null : form.assignment || null };
+        const person = await api.post('/persons', payload);
+        id = person.id;
+        setPersonId(id);
+      }
+      const multipart = new FormData();
+      frames.forEach((frame, index) => multipart.append('frames', frame, `enrollment-${index + 1}.jpg`));
+      multipart.append('reason', isReplacement ? changeReason.trim() : 'Initial facial enrollment at gate station');
+      const result = isReplacement
+        ? await api.put(`/biometrics/enrollments/${id}`, multipart)
+        : await api.post(`/biometrics/enrollments/${id}`, multipart);
+      setNotice(`${result.accepted} quality samples encrypted and saved. LBPH model ${result.model.version} trained for ${result.model.person_count} person(s).`);
+      window.setTimeout(() => onSaved?.(result), 1800);
+    } catch (err) { setError(`${err.message}${personId ? ' You can capture again and retry enrollment for this registered person.' : ''}`); }
+    finally { setSaving(false); }
   };
 
   return (
-    <div style={{ position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.6)', backdropFilter: 'blur(6px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
-      <div className="card animate-fade-in" style={{ width: '800px', maxWidth: '95vw', padding: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-        
-        {/* Header */}
-        <div style={{ padding: '20px 24px', borderBottom: '1px solid var(--border-color)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#f8fafc' }}>
-          <h2 style={{ margin: 0, fontSize: '20px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <ScanFace size={24} color="var(--primary-color)" /> Enroll New Student (LBPH Dataset)
-          </h2>
-          <button onClick={onClose} className="icon-btn" style={{ border: 'none', background: 'transparent' }}>
-            <X size={24} />
-          </button>
+    <div className="modal-backdrop"><div className="modal-card enrollment-modal">
+      <div className="modal-header"><div><p className="eyebrow">Encrypted local dataset</p><h2><ScanFace size={24} /> {isReplacement ? 'Replace facial enrollment' : 'Enroll person & train LBPH'}</h2></div><button onClick={onClose} className="icon-btn"><X size={22} /></button></div>
+      <div className="enrollment-content">
+        {isReplacement ? <div className="enrollment-fields">
+          <div className="enrollment-identity"><span>Authorized person</span><strong>{person.full_name}</strong><small>{person.external_id} · {person.role}{person.grade ? ` · Grade ${person.grade} — ${person.section}` : ''}</small></div>
+          <div className="notice notice-warning"><AlertTriangle size={18} /><span>The current encrypted samples will be securely replaced after the new dataset passes quality checks. The audit history remains.</span></div>
+          <label><span className="field-label">Required re-enrollment reason</span><textarea className="text-area" placeholder="Example: Appearance changed and recognition accuracy was verified as poor" value={changeReason} onChange={(event) => setChangeReason(event.target.value)} /></label>
+        </div> : <div className="form-grid two-columns enrollment-fields">
+          <label><span className="field-label">School ID / employee ID</span><input className="input-field" value={form.external_id} onChange={(e) => patch('external_id', e.target.value)} required /></label>
+          <label><span className="field-label">LRN (students)</span><input className="input-field" value={form.lrn} onChange={(e) => patch('lrn', e.target.value)} /></label>
+          <label className="full-field"><span className="field-label">Full name (Last, First, MI)</span><input className="input-field" value={form.full_name} onChange={(e) => patch('full_name', e.target.value)} required /></label>
+          <label><span className="field-label">Sex for official roster</span><select className="input-field" value={form.sex} onChange={(e) => patch('sex', e.target.value)}><option>Male</option><option>Female</option></select></label>
+          <label><span className="field-label">Personnel group</span><select className="input-field" value={form.role} onChange={(e) => patch('role', e.target.value)}><option>Student</option><option>Faculty</option><option>Non-teaching Personnel</option></select></label>
+          {form.role === 'Student' ? <><label><span className="field-label">Grade</span><input className="input-field" value={form.grade} onChange={(e) => patch('grade', e.target.value)} /></label><label><span className="field-label">Section</span><input className="input-field" value={form.section} onChange={(e) => patch('section', e.target.value)} /></label><label className="full-field"><span className="field-label">Parent/guardian mobile number</span><input className="input-field" placeholder="+639XXXXXXXXX" value={form.guardian_phone} onChange={(e) => patch('guardian_phone', e.target.value)} /></label></>
+            : <label className="full-field"><span className="field-label">Office / assignment</span><input className="input-field" value={form.assignment} onChange={(e) => patch('assignment', e.target.value)} /></label>}
+          <label className="checkbox-field full-field"><input type="checkbox" checked={form.biometric_consent} onChange={(e) => patch('biometric_consent', e.target.checked)} /><span>I confirm the school has documented the applicable consent/authorization and provided the privacy notice for this person.</span></label>
+        </div>}
+        <div className="enrollment-camera">
+          <div className="enrollment-video"><video ref={videoRef} playsInline muted />{!cameraOn && <Camera size={48} />}{isCapturing && <div className="capture-indicator">CAPTURING</div>}{frames.length === targetFrames && !isCapturing && <CheckCircle className="capture-complete" size={48} />}</div>
+          <div><div className="scan-log-top"><strong>Camera frames</strong><span>{frames.length}/{targetFrames}</span></div><div className="weight-meter weight-valid"><span style={{ width: `${frames.length / targetFrames * 100}%` }} /></div><p className="muted-small">Look forward, then slowly turn and tilt your head while keeping one face in view.</p></div>
+          {!cameraOn ? <button className="btn-primary" onClick={startCamera}><Camera size={16} /> Enable camera</button> : <button className="btn-secondary" onClick={captureDataset} disabled={isCapturing}>{isCapturing ? 'Capturing real frames…' : 'Capture enrollment frames'}</button>}
         </div>
-
-        {/* Content Body */}
-        <div style={{ display: 'flex', padding: '24px', gap: '32px' }}>
-          
-          {/* Left: Form Fields */}
-          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '16px' }}>
-            <div>
-              <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '6px' }}>Learner Reference Number (LRN)</label>
-              <input type="text" className="input-field" placeholder="12-digit LRN" />
-            </div>
-            <div>
-              <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '6px' }}>Full Name (Last, First, MI)</label>
-              <input type="text" className="input-field" placeholder="e.g., Dela Cruz, Juan M." />
-            </div>
-            <div style={{ display: 'flex', gap: '12px' }}>
-              <div style={{ flex: 1 }}>
-                <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '6px' }}>Grade Level</label>
-                <select className="input-field"><option>Grade 10</option><option>Grade 11</option></select>
-              </div>
-              <div style={{ flex: 1 }}>
-                <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '6px' }}>Section</label>
-                <select className="input-field"><option>Rizal</option><option>Bonifacio</option></select>
-              </div>
-            </div>
-            <div>
-              <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '6px' }}>Parent/Guardian Mobile Number</label>
-              <input type="text" className="input-field" placeholder="+63 9XX XXX XXXX (For SMS Alerts)" />
-            </div>
-          </div>
-
-          {/* Right: LBPH Dataset Capture */}
-          <div style={{ width: '320px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
-             <div style={{ height: '240px', background: '#0f172a', borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative', overflow: 'hidden', border: '4px solid var(--border-color)' }}>
-               {/* Simulating Webcam Feed */}
-               <Camera size={48} style={{ color: 'rgba(255,255,255,0.2)' }} />
-               {isCapturing && (
-                 <div style={{ position: 'absolute', inset: 0, border: '4px solid var(--success)', borderRadius: '8px', opacity: 0.8 }}>
-                    <div style={{ position: 'absolute', top: 10, right: 10, width: '12px', height: '12px', background: 'var(--danger)', borderRadius: '50%', animation: 'pulse 1s infinite' }}></div>
-                 </div>
-               )}
-               {captureProgress >= 100 && (
-                 <div style={{ position: 'absolute', inset: 0, background: 'rgba(32, 201, 151, 0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                   <CheckCircle size={48} color="var(--success)" />
-                 </div>
-               )}
-             </div>
-
-             <div style={{ background: '#f8fafc', padding: '12px', borderRadius: '8px' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', marginBottom: '8px', fontWeight: 500 }}>
-                  <span>Dataset Collection Progress</span>
-                  <span>{Math.round(captureProgress)}%</span>
-                </div>
-                <div style={{ height: '6px', background: 'var(--border-color)', borderRadius: '999px', overflow: 'hidden' }}>
-                  <div style={{ height: '100%', background: 'var(--primary-color)', width: `${captureProgress}%`, transition: 'width 0.1s linear' }}></div>
-                </div>
-                <p style={{ fontSize: '11px', color: 'var(--text-secondary)', margin: '8px 0 0 0', lineHeight: 1.4 }}>
-                  The system requires ~30 sample frames from different angles to construct a reliable LBPH histogram for facial recognition.
-                </p>
-             </div>
-
-             <button 
-               className={captureProgress >= 100 ? "btn-secondary" : "btn-primary"} 
-               onClick={handleStartCapture}
-               disabled={isCapturing || captureProgress >= 100}
-               style={{ width: '100%', display: 'flex', justifyContent: 'center', gap: '8px' }}
-             >
-               {captureProgress >= 100 ? <><CheckCircle size={16} /> Dataset Complete</> : <><Camera size={16} /> Capture 30 Frames</>}
-             </button>
-          </div>
-
-        </div>
-
-        {/* Footer */}
-        <div style={{ padding: '16px 24px', borderTop: '1px solid var(--border-color)', display: 'flex', justifyContent: 'flex-end', gap: '12px', background: '#f8fafc' }}>
-          <button className="btn-secondary" onClick={onClose} style={{ padding: '8px 24px' }}>Cancel</button>
-          <button className="btn-primary" disabled={captureProgress < 100} style={{ padding: '8px 24px', display: 'flex', alignItems: 'center', gap: '8px', background: captureProgress < 100 ? 'var(--text-muted)' : 'var(--success)' }}>
-            <Database size={16} /> Save & Train Model
-          </button>
-        </div>
-
       </div>
-    </div>
+      {error && <div className="notice notice-danger"><AlertTriangle size={18} /> {error}</div>}
+      {notice && <div className="notice notice-success"><CheckCircle size={18} /> {notice}</div>}
+      <div className="modal-actions"><button className="btn-secondary" onClick={onClose}>Cancel</button><button className="btn-primary" onClick={saveAndTrain} disabled={saving || frames.length < targetFrames}><Database size={16} /> {saving ? 'Quality-checking & training…' : isReplacement ? 'Replace samples & retrain model' : 'Save encrypted samples & train model'}</button></div>
+    </div></div>
   );
 }

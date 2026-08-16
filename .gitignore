@@ -11,6 +11,17 @@ node_modules
 dist
 dist-ssr
 *.local
+.npm-cache/
+
+# EduScan backend runtime data and secrets
+backend/.venv/
+backend/.env
+backend/data/*
+!backend/data/templates/
+backend/data/templates/*
+!backend/data/templates/School Form 2 (SF2) Daily Attendance Report of Learners.xlsx
+**/__pycache__/
+*.py[cod]
 
 # Editor directories and files
 .vscode/*

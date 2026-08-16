@@ -1,5 +1,6 @@
 import { Outlet, NavLink } from 'react-router-dom';
-import { Bell, Settings, User, BookOpen, AlertTriangle, Users } from 'lucide-react';
+import { Bell, LogOut, BookOpen, AlertTriangle, Users, ClipboardCheck } from 'lucide-react';
+import { auth } from '../api/client';
 
 export default function TeacherLayout() {
   return (
@@ -47,24 +48,22 @@ export default function TeacherLayout() {
           <NavLink to="/teacher/roster" className={({isActive}) => isActive ? 'nav-link active' : 'nav-link'}>
             <Users size={16} /> <span className="nav-text">My Advisory</span>
           </NavLink>
+          <NavLink to="/teacher/attendance" className={({isActive}) => isActive ? 'nav-link active' : 'nav-link'}>
+            <ClipboardCheck size={16} /> <span className="nav-text">Corrections</span>
+          </NavLink>
         </nav>
 
         {/* Right Actions */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
           
           <div style={{ display: 'flex', gap: '8px' }}>
-            <button className="icon-btn">
-              <Settings size={20} />
-            </button>
+            <button className="icon-btn" title="Sign out" onClick={() => { auth.clear(); window.location.href = '/login'; }}><LogOut size={20} /></button>
             <button className="icon-btn" style={{ position: 'relative' }}>
               <Bell size={20} />
               <span style={{ position: 'absolute', top: '8px', right: '10px', width: '8px', height: '8px', background: 'var(--secondary-color)', borderRadius: '50%', border: '2px solid white' }}></span>
             </button>
           </div>
           
-          <div style={{ width: '42px', height: '42px', borderRadius: '50%', background: 'linear-gradient(135deg, var(--accent-light), #d0ebff)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', border: '2px solid white', boxShadow: '0 2px 8px rgba(0,0,0,0.05)', transition: 'transform 0.2s' }} onMouseOver={e => e.currentTarget.style.transform = 'scale(1.05)'} onMouseOut={e => e.currentTarget.style.transform = 'scale(1)'}>
-            <User size={20} color="var(--accent-blue)" />
-          </div>
         </div>
       </header>
 
