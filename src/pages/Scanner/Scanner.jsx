@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { AlertTriangle, Camera, CheckCircle2, Clock3, LogOut, MessageSquareText, ScanFace, UserPlus } from 'lucide-react';
+import { AlertTriangle, Camera, CheckCircle2, Clock3, LogOut, Maximize2, MessageSquareText, Minimize2, ScanFace, UserPlus } from 'lucide-react';
 import { api, auth, captureVideoFrame, displayTime, localDate } from '../../api/client';
 import StudentRegistrationModal from '../../components/Scanner/StudentRegistrationModal';
 
 export default function Scanner() {
   const videoRef = useRef(null);
+  const cameraFrameRef = useRef(null);
   const streamRef = useRef(null);
   const timerRef = useRef(null);
   const busyRef = useRef(false);
@@ -14,6 +15,7 @@ export default function Scanner() {
   const [events, setEvents] = useState([]);
   const [outboxCount, setOutboxCount] = useState(0);
   const [registrationOpen, setRegistrationOpen] = useState(false);
+  const [cameraFullscreen, setCameraFullscreen] = useState(false);
 
   const refreshLog = useCallback(async () => {
     try {
@@ -29,6 +31,11 @@ export default function Scanner() {
   useEffect(() => () => {
     clearInterval(timerRef.current);
     streamRef.current?.getTracks().forEach((track) => track.stop());
+  }, []);
+  useEffect(() => {
+    const updateFullscreenState = () => setCameraFullscreen(document.fullscreenElement === cameraFrameRef.current);
+    document.addEventListener('fullscreenchange', updateFullscreenState);
+    return () => document.removeEventListener('fullscreenchange', updateFullscreenState);
   }, []);
 
   const startCamera = async () => {
@@ -74,6 +81,16 @@ export default function Scanner() {
     timerRef.current = window.setInterval(scanOnce, 1400);
   };
 
+  const toggleCameraFullscreen = async () => {
+    try {
+      if (document.fullscreenElement) await document.exitFullscreen();
+      else if (cameraFrameRef.current?.requestFullscreen) await cameraFrameRef.current.requestFullscreen();
+      else setFeedback({ ok: false, message: 'Full-screen camera is not supported by this browser. The enlarged scanner view is still available.' });
+    } catch (err) {
+      setFeedback({ ok: false, message: `Full-screen camera could not start: ${err.message}` });
+    }
+  };
+
   const logout = () => { auth.clear(); window.location.href = '/login'; };
 
   return (
@@ -89,16 +106,23 @@ export default function Scanner() {
 
       <main className="scanner-main">
         <section className="scanner-stage">
-          <div className="camera-placeholder live-camera">
+          <div className="camera-placeholder live-camera" ref={cameraFrameRef}>
             <video ref={videoRef} playsInline muted aria-label="Gate camera preview" />
             {!cameraOn && <div className="camera-frame"><Camera size={78} /><h1>Gate camera</h1><p>Camera frames are processed by the local LBPH server and are not uploaded to a cloud service.</p></div>}
-            {scanning && <div className="face-guide"><span>Keep every face visible and facing the camera</span></div>}
+            {scanning && <div className="multi-face-guide"><span>Multi-face scan area · keep every person inside the frame and facing the camera</span></div>}
+            <button className="camera-fullscreen-toggle" onClick={toggleCameraFullscreen} title={cameraFullscreen ? 'Exit full-screen camera' : 'Open full-screen camera'}>
+              {cameraFullscreen ? <Minimize2 size={18} /> : <Maximize2 size={18} />}
+              <span>{cameraFullscreen ? 'Exit full screen' : 'Full-screen camera'}</span>
+            </button>
           </div>
 
           <div className="scanner-control-panel">
             <div><p className="eyebrow">Live local processing</p><h2>{cameraOn ? 'Multi-face LBPH recognition station' : 'Start the secured gate camera'}</h2><p>Each recognized person alternates between time-in and time-out, allowing authorized exits and re-entries throughout the day.</p></div>
-            {!cameraOn ? <button className="btn-primary" onClick={startCamera}><Camera size={18} /> Enable camera</button>
-              : <button className={scanning ? 'btn-secondary' : 'btn-primary'} onClick={toggleScanning}><ScanFace size={18} /> {scanning ? 'Pause recognition' : 'Start recognition'}</button>}
+            <div className="scanner-control-actions">
+              {!cameraOn ? <button className="btn-primary" onClick={startCamera}><Camera size={18} /> Enable camera</button>
+                : <button className={scanning ? 'btn-secondary' : 'btn-primary'} onClick={toggleScanning}><ScanFace size={18} /> {scanning ? 'Pause recognition' : 'Start recognition'}</button>}
+              <button className="btn-secondary" onClick={toggleCameraFullscreen}><Maximize2 size={18} /> Expand camera</button>
+            </div>
           </div>
 
           {feedback && (

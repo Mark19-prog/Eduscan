@@ -2,6 +2,12 @@
 
 EduScan is the working local-first attendance, SMS, grading, and SF2 reporting system for San Jose National High School. It uses a browser camera and an OpenCV LBPH model on the school server; biometric frames are not sent to a cloud recognition provider.
 
+## Documentation
+
+- [Project structure and file guide](docs/PROJECT_STRUCTURE.md) — architecture, request flow, and the purpose of every maintained source file
+- [RAD progress report](docs/RAD_PROGRESS_REPORT.txt) — completed work organized around Rapid Application Development phases
+- [Disaster-recovery procedure](docs/DISASTER_RECOVERY.md) — encrypted backup, integrity verification, staged restoration, and recovery testing
+
 ## Implemented system
 
 - Actual camera capture for enrollment and gate recognition
@@ -13,6 +19,7 @@ EduScan is the working local-first attendance, SMS, grading, and SF2 reporting s
 - Student, faculty, and non-teaching personnel attendance
 - Verified matches alternate between time-in and time-out throughout the day, supporting repeated exits and re-entries
 - Multi-face gate frames are detected and each distinct enrolled person is matched independently
+- Enlarged 16:9 gate camera workspace with a whole-frame multi-face guide and optional browser full-screen mode
 - Teacher-defined schedules and tardiness grace periods
 - Holidays, suspensions, weekends, excused absences, and authorized special schedules
 - Automatic daily absence closing, temporary XLSX generation, and SMS dispatch at the authorized cutoff
