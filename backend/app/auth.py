@@ -6,7 +6,7 @@ import hmac
 import json
 import os
 import time
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -79,6 +79,9 @@ def current_user(credentials: HTTPAuthorizationCredentials | None = Depends(bear
 
 def require_roles(*roles: str):
     def dependency(user: User = Depends(current_user)) -> User:
+        if user.must_change_password:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
+                                detail="Password change required before using EduScan")
         if user.role not in roles:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="This role is not authorized")
         return user
@@ -94,7 +97,8 @@ def seed_users(db: Session) -> None:
     changed = False
     for username, password, role, full_name in defaults:
         if not db.scalar(select(User).where(User.username == username)):
-            db.add(User(username=username, password_hash=hash_password(password), role=role, full_name=full_name))
+            db.add(User(username=username, password_hash=hash_password(password), role=role, full_name=full_name,
+                        must_change_password=True, failed_login_count=0))
             changed = True
     if changed:
         db.commit()

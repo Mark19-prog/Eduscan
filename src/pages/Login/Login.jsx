@@ -17,7 +17,8 @@ export default function Login() {
     try {
       const result = await api.post('/auth/login', { username, password });
       auth.save(result);
-      navigate(result.role === 'admin' ? '/dashboard' : result.role === 'teacher' ? '/teacher' : '/scanner');
+      const workspace = result.role === 'teacher' ? '/teacher' : result.role === 'scanner' ? '/scanner' : '/dashboard';
+      navigate(result.must_change_password ? '/account/security' : workspace);
     } catch (err) { setError(err.message); }
     finally { setBusy(false); }
   };
@@ -83,18 +84,7 @@ export default function Login() {
           <p style={{ color: 'var(--text-secondary)', marginBottom: '16px' }}>Please enter your administrative credentials.</p>
           
           <div style={{ background: '#f8fafc', border: '1px solid var(--border-color)', borderRadius: '8px', padding: '16px', marginBottom: '32px', fontSize: '13px', color: 'var(--text-secondary)' }}>
-            <strong style={{ display: 'block', marginBottom: '8px', color: 'var(--text-primary)' }}>Initial local accounts (change before deployment):</strong>
-            <div style={{ display: 'flex', gap: '24px' }}>
-              <div>
-                <span style={{ display: 'block' }}>Admin: <strong>admin</strong> / <strong>admin123</strong></span>
-              </div>
-              <div>
-                <span style={{ display: 'block' }}>Teacher: <strong>teacher</strong> / <strong>teacher123</strong></span>
-              </div>
-              <div>
-                <span style={{ display: 'block' }}>Scanner: <strong>scanner</strong> / <strong>scanner123</strong></span>
-              </div>
-            </div>
+            Account access is assigned by the school administrator. Temporary credentials must be changed before attendance, grading, or scanner functions become available.
           </div>
 
           <form onSubmit={handleLogin} style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>

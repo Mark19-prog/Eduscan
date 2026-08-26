@@ -4,15 +4,19 @@ export const auth = {
   token: () => localStorage.getItem('eduscan.token'),
   role: () => localStorage.getItem('userRole'),
   name: () => localStorage.getItem('eduscan.fullName'),
+  mustChangePassword: () => localStorage.getItem('eduscan.mustChangePassword') === 'true',
   save(result) {
     localStorage.setItem('eduscan.token', result.access_token);
     localStorage.setItem('userRole', result.role);
     localStorage.setItem('eduscan.fullName', result.full_name);
+    localStorage.setItem('eduscan.mustChangePassword', String(Boolean(result.must_change_password)));
   },
+  passwordChanged() { localStorage.setItem('eduscan.mustChangePassword', 'false'); },
   clear() {
     localStorage.removeItem('eduscan.token');
     localStorage.removeItem('userRole');
     localStorage.removeItem('eduscan.fullName');
+    localStorage.removeItem('eduscan.mustChangePassword');
   },
 };
 
@@ -59,6 +63,19 @@ export const api = {
     link.download = filename;
     link.click();
     URL.revokeObjectURL(url);
+  },
+  printHtml: async (path) => {
+    const target = window.open('about:blank', '_blank');
+    if (!target) throw new Error('Allow pop-ups for EduScan to open the printable report.');
+    target.opener = null;
+    try {
+      target.document.body.textContent = 'Preparing printable EduScan report…';
+      const response = await request(path);
+      const html = await response.text();
+      const url = URL.createObjectURL(new Blob([html], { type: 'text/html' }));
+      target.location.href = url;
+      window.setTimeout(() => URL.revokeObjectURL(url), 60000);
+    } catch (error) { target.close(); throw error; }
   },
 };
 

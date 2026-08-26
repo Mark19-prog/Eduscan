@@ -1,14 +1,18 @@
 from __future__ import annotations
 
 import hashlib
+import csv
+import io
 import json
+import math
+import re
 import uuid
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -18,26 +22,41 @@ from .config import settings
 from .database import SessionLocal, engine, get_db
 from .migrations import run_migrations
 from .models import (
-    AttendanceCorrection, AttendanceEvent, BiometricAuditEvent, BiometricModel, BiometricSample, CalendarException,
-    ClassSchedule, ExcusedAbsence, GradeChangeAudit, GradeComponent, GradeLevel, GradeScore, GradingPeriod,
-    Intervention, Person, RecordDisposalAudit, RosterImportAudit, SchoolSection, SchoolYear, SmsOutbox, Subject, User,
+    AttendanceCorrection, AttendanceEvent, AttendanceResetAudit, BiometricAuditEvent, BiometricModel, BiometricSample, CalendarException,
+    BackupRun, ClassSchedule, ExcusedAbsence, GeneratedReport, GradeChangeAudit, GradeComponent, GradebookState,
+    GradeLevel, GradeScore, GradingPeriod, Intervention, LegalHold, Person, PersonnelSchedule, RecognitionReview,
+    RecordDisposalAudit, RetentionExecution, RosterImportAudit, SchoolSection, SchoolYear, SmsOutbox,
+    Subject, SystemAuditEvent, User,
 )
 from .schemas import (
-    AttendanceCorrectionPayload, AttendanceSettingsPayload, BiometricChangeReason, CalendarExceptionPayload,
-    CompliancePayload, ExcusedAbsencePayload, GradebookPayload, GradeLevelPayload, GradingPeriodPayload,
-    InterventionPayload, LoginRequest, LoginResponse, PasswordChangePayload, PersonCreate, RecognitionResult,
+    AttendanceCorrectionPayload, AttendanceResetPayload, AttendanceSettingsPayload, BiometricChangeReason, CalendarExceptionPayload,
+    BackupSchedulePayload, BiometricRuntimeSettingsPayload, CompliancePayload, ExcusedAbsencePayload,
+    GradebookActionPayload, GradebookPayload, GradeLevelPayload, GradingPeriodPayload, LegalHoldPayload,
+    LegalHoldReleasePayload, RecognitionReviewResolutionPayload, ReportReviewPayload, RetentionExecutionPayload,
+    RetentionPolicyPayload,
+    InterventionPayload, LoginRequest, LoginResponse, PasswordChangePayload, PersonCreate, PersonnelSchedulePayload, RecognitionResult,
     RecordDisposalPayload, SchedulePayload, SchoolYearPayload, SectionPayload, SmsSettingsPayload, SubjectPayload,
     UserCreate, UserUpdate,
 )
-from .services.attendance import close_day, list_rows, record_gate_match, save_correction
-from .services.backup import BACKUP_DIR, create_secure_backup, stage_secure_restore
+from .services.attendance import close_day, latest_day_reset, list_rows, record_gate_match, reset_day, save_correction
+from .services.audit import add_audit, model_snapshot
+from .services.backup import BACKUP_DIR, database_backend, run_managed_backup, stage_secure_restore
 from .services.biometrics import biometric_service
 from .services.disposal import dispose_person_records
 from .services.roster import import_roster
 from .services.scheduler import attendance_scheduler
-from .services.settings_store import get_json, set_json, set_secret
+from .services.grading import gradebook_summary
+from .services.reports import (
+    attendance_report_html, generate_attendance_range_xlsx, generate_grade_report_xlsx,
+    grade_report_html, register_report,
+)
+from .services.retention import execute_retention, public_preview, retention_policy, retention_preview
+from .services.settings_store import get_json, get_secret, set_json, set_secret
 from .services.sf2 import generate_sf2, generate_temporary_log, save_template, template_path
-from .services.sms import dispatch_outbox, dispatch_queued, dispatch_record_by_id, mask_phone, send_record, sms_config
+from .services.sms import (
+    cancel_record, dispatch_outbox, dispatch_queued, dispatch_record_by_id, gateway_diagnostics,
+    mask_phone, reconcile_outbox, requeue_record, send_record, sms_config,
+)
 
 
 app = FastAPI(title="EduScan API", version="1.0.0")
@@ -97,6 +116,8 @@ def person_json(person: Person, db: Session, include_private: bool = True) -> di
         "id": person.id, "external_id": person.external_id, "lrn": person.lrn, "full_name": person.full_name,
         "sex": person.sex, "role": person.role, "grade": person.grade, "section": person.section,
         "assignment": person.assignment, "guardian_phone": person.guardian_phone if include_private else None,
+        "enrollment_status": person.enrollment_status, "enrollment_start_date": person.enrollment_start_date,
+        "enrollment_end_date": person.enrollment_end_date, "transfer_school": person.transfer_school,
         "biometric_consent": person.biometric_consent, "active": person.active,
         "sample_count": count, "enrolled": count >= settings.min_samples,
     }
@@ -109,6 +130,32 @@ def correction_json(item: AttendanceCorrection) -> dict:
         "time_out": item.time_out, "reason": item.reason, "actor_name": item.actor_name,
         "actor_role": item.actor_role, "before": json.loads(item.before_json), "created_at": item.created_at,
     }
+
+
+def reset_json(item: AttendanceResetAudit) -> dict:
+    return {
+        "id": item.id, "attendance_date": item.attendance_date, "reason": item.reason,
+        "actor_name": item.actor_name, "actor_role": item.actor_role,
+        "superseded_event_count": item.superseded_event_count,
+        "superseded_correction_count": item.superseded_correction_count, "created_at": item.created_at,
+    }
+
+
+def adviser_sections(db: Session, user: User) -> list[SchoolSection]:
+    if user.role in {"admin", "records_officer"}:
+        return db.scalars(select(SchoolSection).where(SchoolSection.active.is_(True))).all()
+    return [item for item in db.scalars(select(SchoolSection).where(SchoolSection.active.is_(True))).all()
+            if item.adviser_user_id == user.id or (
+                item.adviser_user_id is None and (item.adviser_name or "").strip().casefold() == user.full_name.strip().casefold()
+            )]
+
+
+def ensure_adviser_access(db: Session, user: User, grade: str, section: str) -> None:
+    if user.role in {"admin", "records_officer"}:
+        return
+    allowed = {(item.grade_level.name, item.name) for item in adviser_sections(db, user)}
+    if (grade, section) not in allowed:
+        raise HTTPException(status_code=403, detail="This section is not assigned to the signed-in adviser")
 
 
 def biometric_enrollment_json(person: Person, db: Session, include_samples: bool = False) -> dict:
@@ -153,15 +200,31 @@ def health(db: Session = Depends(get_db)) -> dict:
 
 @app.post("/api/auth/login", response_model=LoginResponse)
 def login(payload: LoginRequest, db: Session = Depends(get_db)) -> LoginResponse:
-    user = db.scalar(select(User).where(User.username == payload.username))
+    user = db.scalar(select(User).where(func.lower(User.username) == payload.username.strip().lower()))
+    now = datetime.utcnow()
+    if user and user.locked_until and user.locked_until > now:
+        remaining = max(1, int((user.locked_until - now).total_seconds() // 60) + 1)
+        raise HTTPException(status_code=423, detail=f"Account temporarily locked; try again in {remaining} minute(s)")
     if not user or not user.active or not verify_password(payload.password, user.password_hash):
+        if user and user.active:
+            user.failed_login_count = (user.failed_login_count or 0) + 1
+            if user.failed_login_count >= 5:
+                user.locked_until = now + timedelta(minutes=15)
+                user.failed_login_count = 0
+            db.commit()
         raise HTTPException(status_code=401, detail="Invalid username or password")
-    return LoginResponse(access_token=create_token(user), role=user.role, full_name=user.full_name)
+    user.failed_login_count = 0
+    user.locked_until = None
+    user.last_login_at = now
+    db.commit()
+    return LoginResponse(access_token=create_token(user), role=user.role, full_name=user.full_name,
+                         must_change_password=user.must_change_password)
 
 
 @app.get("/api/auth/me")
 def me(user: User = Depends(current_user)) -> dict:
-    return {"id": user.id, "username": user.username, "role": user.role, "full_name": user.full_name}
+    return {"id": user.id, "username": user.username, "role": user.role, "full_name": user.full_name,
+            "must_change_password": user.must_change_password, "password_changed_at": user.password_changed_at}
 
 
 @app.post("/api/auth/change-password")
@@ -172,25 +235,37 @@ def change_password(payload: PasswordChangePayload, db: Session = Depends(get_db
     if payload.current_password == payload.new_password:
         raise HTTPException(status_code=422, detail="New password must be different")
     user.password_hash = hash_password(payload.new_password)
+    user.must_change_password = False
+    user.password_changed_at = datetime.utcnow()
+    user.failed_login_count = 0
+    user.locked_until = None
+    add_audit(db, user, "PasswordChange", "User", user.id,
+              "Account owner changed their password", {}, {"must_change_password": False})
     db.commit()
-    return {"changed": True}
+    return {"changed": True, "role": user.role, "full_name": user.full_name,
+            "must_change_password": False}
 
 
 @app.get("/api/admin/users")
 def admin_users(db: Session = Depends(get_db), _: User = Depends(require_roles("admin"))) -> list[dict]:
     return [{"id": item.id, "username": item.username, "role": item.role, "full_name": item.full_name,
-             "active": item.active, "created_at": item.created_at}
+             "active": item.active, "must_change_password": item.must_change_password,
+             "locked_until": item.locked_until, "last_login_at": item.last_login_at,
+             "created_at": item.created_at}
             for item in db.scalars(select(User).order_by(User.full_name)).all()]
 
 
 @app.post("/api/admin/users")
 def create_user(payload: UserCreate, db: Session = Depends(get_db),
-                _: User = Depends(require_roles("admin"))) -> dict:
+                actor: User = Depends(require_roles("admin"))) -> dict:
     if db.scalar(select(User).where(User.username == payload.username)):
         raise HTTPException(status_code=409, detail="Username is already in use")
     item = User(username=payload.username, password_hash=hash_password(payload.password), role=payload.role,
-                full_name=payload.full_name, active=payload.active)
-    db.add(item); db.commit(); db.refresh(item)
+                full_name=payload.full_name, active=payload.active, must_change_password=True,
+                failed_login_count=0)
+    db.add(item); db.flush()
+    add_audit(db, actor, "Create", "User", item.id, f"Account {item.username} created", {}, model_snapshot(item))
+    db.commit(); db.refresh(item)
     return {"id": item.id}
 
 
@@ -200,13 +275,19 @@ def update_user(user_id: int, payload: UserUpdate, db: Session = Depends(get_db)
     item = db.get(User, user_id)
     if not item:
         raise HTTPException(status_code=404, detail="Account was not found")
-    if payload.role not in {"admin", "teacher", "scanner"}:
-        raise HTTPException(status_code=422, detail="Role must be admin, teacher, or scanner")
+    if payload.role not in {"admin", "teacher", "scanner", "records_officer", "privacy_officer", "ict"}:
+        raise HTTPException(status_code=422, detail="Unsupported account role")
     if item.id == actor.id and (not payload.active or payload.role != "admin"):
         raise HTTPException(status_code=422, detail="You cannot remove your own active administrator access")
+    before = model_snapshot(item)
     item.role, item.full_name, item.active = payload.role, payload.full_name, payload.active
     if payload.new_password:
         item.password_hash = hash_password(payload.new_password)
+        item.must_change_password = True
+        item.password_changed_at = None
+        item.failed_login_count = 0
+        item.locked_until = None
+    add_audit(db, actor, "Update", "User", item.id, f"Account {item.username} updated", before, model_snapshot(item))
     db.commit()
     return {"saved": True}
 
@@ -219,13 +300,30 @@ def deactivate_user(user_id: int, db: Session = Depends(get_db),
         raise HTTPException(status_code=404, detail="Account was not found")
     if item.id == actor.id:
         raise HTTPException(status_code=422, detail="You cannot deactivate your own account")
-    item.active = False; db.commit()
+    before = model_snapshot(item)
+    item.active = False
+    add_audit(db, actor, "Deactivate", "User", item.id, f"Account {item.username} deactivated", before, model_snapshot(item))
+    db.commit()
     return {"deactivated": True}
+
+
+@app.post("/api/admin/users/{user_id}/unlock")
+def unlock_user(user_id: int, db: Session = Depends(get_db),
+                actor: User = Depends(require_roles("admin"))) -> dict:
+    item = db.get(User, user_id)
+    if not item:
+        raise HTTPException(status_code=404, detail="Account was not found")
+    before = model_snapshot(item)
+    item.failed_login_count = 0
+    item.locked_until = None
+    add_audit(db, actor, "Unlock", "User", item.id, f"Account {item.username} unlocked", before, model_snapshot(item))
+    db.commit()
+    return {"unlocked": True}
 
 
 @app.get("/api/persons")
 def persons(role: str | None = None, grade: str | None = None, section: str | None = None,
-            db: Session = Depends(get_db), _: User = Depends(require_roles("admin", "teacher"))) -> list[dict]:
+            db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "teacher", "records_officer"))) -> list[dict]:
     query = select(Person).where(Person.active.is_(True)).order_by(Person.full_name)
     if role:
         query = query.where(Person.role == role)
@@ -233,11 +331,15 @@ def persons(role: str | None = None, grade: str | None = None, section: str | No
         query = query.where(Person.grade == grade)
     if section:
         query = query.where(Person.section == section)
-    return [person_json(item, db) for item in db.scalars(query).all()]
+    items = db.scalars(query).all()
+    if user.role == "teacher":
+        allowed = {(item.grade_level.name, item.name) for item in adviser_sections(db, user)}
+        items = [item for item in items if item.role == "Student" and (item.grade, item.section) in allowed]
+    return [person_json(item, db) for item in items]
 
 
 @app.post("/api/persons")
-def create_person(payload: PersonCreate, db: Session = Depends(get_db), _: User = Depends(require_roles("admin"))) -> dict:
+def create_person(payload: PersonCreate, db: Session = Depends(get_db), actor: User = Depends(require_roles("admin"))) -> dict:
     if db.scalar(select(Person).where(Person.external_id == payload.external_id)):
         raise HTTPException(status_code=409, detail="External ID is already registered")
     if payload.lrn and db.scalar(select(Person).where(Person.lrn == payload.lrn)):
@@ -246,6 +348,8 @@ def create_person(payload: PersonCreate, db: Session = Depends(get_db), _: User 
         raise HTTPException(status_code=422, detail="Student grade and section are required")
     person = Person(**payload.model_dump())
     db.add(person)
+    db.flush()
+    add_audit(db, actor, "Create", "Person", person.id, f"School record created for {person.full_name}", {}, model_snapshot(person))
     db.commit()
     db.refresh(person)
     return person_json(person, db)
@@ -253,28 +357,58 @@ def create_person(payload: PersonCreate, db: Session = Depends(get_db), _: User 
 
 @app.patch("/api/persons/{person_id}")
 def update_person(person_id: int, payload: PersonCreate, db: Session = Depends(get_db),
-                  _: User = Depends(require_roles("admin"))) -> dict:
+                   actor: User = Depends(require_roles("admin"))) -> dict:
     person = db.get(Person, person_id)
     if not person:
         raise HTTPException(status_code=404, detail="Person was not found")
+    duplicate_id = db.scalar(select(Person).where(Person.external_id == payload.external_id, Person.id != person_id))
+    duplicate_lrn = db.scalar(select(Person).where(Person.lrn == payload.lrn, Person.id != person_id)) if payload.lrn else None
+    if duplicate_id:
+        raise HTTPException(status_code=409, detail="External ID is already registered")
+    if duplicate_lrn:
+        raise HTTPException(status_code=409, detail="LRN is already registered")
+    before = model_snapshot(person)
     for key, value in payload.model_dump().items():
         setattr(person, key, value)
+    add_audit(db, actor, "Update", "Person", person.id, f"School record updated for {person.full_name}", before, model_snapshot(person))
     db.commit()
     return person_json(person, db)
 
 
 @app.get("/api/admin/persons")
 def admin_persons(db: Session = Depends(get_db), _: User = Depends(require_roles("admin"))) -> list[dict]:
-    return [person_json(item, db) for item in db.scalars(select(Person).order_by(Person.active.desc(), Person.full_name)).all()]
+    people = db.scalars(select(Person).order_by(Person.active.desc(), Person.full_name, Person.external_id)).all()
+    name_counts: dict[str, int] = {}
+    for person in people:
+        if person.active and person.role == "Student":
+            key = re.sub(r"[^a-z0-9]", "", person.full_name.casefold())
+            name_counts[key] = name_counts.get(key, 0) + 1
+    result = []
+    for person in people:
+        item = person_json(person, db)
+        key = re.sub(r"[^a-z0-9]", "", person.full_name.casefold())
+        item["possible_duplicate"] = person.active and person.role == "Student" and name_counts.get(key, 0) > 1
+        result.append(item)
+    return result
+
+
+@app.get("/api/my/advisory-sections")
+def my_advisory_sections(db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "teacher", "records_officer"))) -> list[dict]:
+    return [{"id": item.id, "grade": item.grade_level.name, "section": item.name,
+             "adviser_name": item.adviser_name} for item in adviser_sections(db, user)]
 
 
 @app.post("/api/admin/persons/{person_id}/active")
 def set_person_active(person_id: int, active: bool = Form(...), db: Session = Depends(get_db),
-                      _: User = Depends(require_roles("admin"))) -> dict:
+                      actor: User = Depends(require_roles("admin"))) -> dict:
     person = db.get(Person, person_id)
     if not person:
         raise HTTPException(status_code=404, detail="Person was not found")
-    person.active = active; db.commit()
+    before = model_snapshot(person)
+    person.active = active
+    add_audit(db, actor, "Activate" if active else "Deactivate", "Person", person.id,
+              f"School record {'activated' if active else 'deactivated'} for {person.full_name}", before, model_snapshot(person))
+    db.commit()
     return person_json(person, db)
 
 
@@ -315,21 +449,57 @@ def roster_imports(db: Session = Depends(get_db), _: User = Depends(require_role
 
 
 @app.get("/api/admin/backups")
-def list_backups(_: User = Depends(require_roles("admin"))) -> list[dict]:
+def list_backups(db: Session = Depends(get_db), _: User = Depends(require_roles("admin", "ict"))) -> list[dict]:
     BACKUP_DIR.mkdir(parents=True, exist_ok=True)
-    return [{"filename": path.name, "size_bytes": path.stat().st_size,
-             "created_at": __import__("datetime").datetime.fromtimestamp(path.stat().st_mtime)}
-            for path in sorted(BACKUP_DIR.glob("*.edubak"), key=lambda item: item.stat().st_mtime, reverse=True)]
+    runs = db.scalars(select(BackupRun).where(
+        BackupRun.status == "Completed", BackupRun.filename.is_not(None),
+    ).order_by(BackupRun.created_at.desc()).limit(500)).all()
+    result = [{"id": item.id, "trigger": item.trigger, "status": item.status,
+             "filename": item.filename, "size_bytes": item.size_bytes, "sha256": item.file_sha256,
+             "database_backend": item.database_backend,
+             "encryption_key_fingerprint": item.encryption_key_fingerprint,
+             "model_version": item.model_version, "destination": item.destination,
+             "error": item.error, "actor_name": item.actor_name, "created_at": item.created_at}
+              for item in runs]
+    registered = {item.filename for item in runs}
+    for path in sorted(BACKUP_DIR.glob("*.edubak"), key=lambda item: item.stat().st_mtime, reverse=True):
+        if path.name not in registered:
+            result.append({"id": f"legacy:{path.name}", "trigger": "Legacy", "status": "Completed",
+                           "filename": path.name, "size_bytes": path.stat().st_size, "sha256": None,
+                           "database_backend": "unknown", "encryption_key_fingerprint": "unknown",
+                           "model_version": None, "destination": str(path), "error": None,
+                           "actor_name": "Pre-inventory backup", "created_at": datetime.fromtimestamp(path.stat().st_mtime)})
+    return sorted(result, key=lambda item: item["created_at"], reverse=True)
+
+
+@app.get("/api/admin/backup-runs")
+def backup_run_inventory(db: Session = Depends(get_db),
+                         _: User = Depends(require_roles("admin", "ict"))) -> list[dict]:
+    runs = db.scalars(select(BackupRun).order_by(BackupRun.created_at.desc()).limit(1000)).all()
+    return [{"id": item.id, "trigger": item.trigger, "status": item.status,
+             "filename": item.filename, "size_bytes": item.size_bytes, "sha256": item.file_sha256,
+             "database_backend": item.database_backend,
+             "encryption_key_fingerprint": item.encryption_key_fingerprint,
+             "model_version": item.model_version, "destination": item.destination,
+             "error": item.error, "actor_name": item.actor_name, "created_at": item.created_at}
+            for item in runs]
 
 
 @app.post("/api/admin/backups")
-def create_backup(passphrase: str = Form(...), _: User = Depends(require_roles("admin"))) -> dict:
-    path = create_secure_backup(passphrase)
-    return {"created": True, "filename": path.name, "size_bytes": path.stat().st_size}
+def create_backup(passphrase: str = Form(...), destination: str = Form(""), db: Session = Depends(get_db),
+                  user: User = Depends(require_roles("admin", "ict"))) -> dict:
+    run = run_managed_backup(db, passphrase, "Manual", user, destination)
+    add_audit(db, user, "Backup", "BackupRun", run.id, f"Manual backup {run.status.lower()}", {},
+              model_snapshot(run), commit=True)
+    if run.status == "Failed":
+        raise HTTPException(status_code=500, detail=run.error or "Backup failed")
+    return {"created": True, "run_id": run.id, "filename": run.filename,
+            "size_bytes": run.size_bytes, "sha256": run.file_sha256,
+            "database_backend": run.database_backend, "destination": run.destination}
 
 
 @app.get("/api/admin/backups/{filename}")
-def download_backup(filename: str, _: User = Depends(require_roles("admin"))):
+def download_backup(filename: str, _: User = Depends(require_roles("admin", "ict"))):
     if Path(filename).name != filename or not filename.endswith(".edubak"):
         raise HTTPException(status_code=404, detail="Backup was not found")
     path = BACKUP_DIR / filename
@@ -340,7 +510,8 @@ def download_backup(filename: str, _: User = Depends(require_roles("admin"))):
 
 @app.post("/api/admin/backups/restore")
 async def restore_backup(file: UploadFile = File(...), passphrase: str = Form(...),
-                         confirmation: str = Form(...), _: User = Depends(require_roles("admin"))) -> dict:
+                         confirmation: str = Form(...), db: Session = Depends(get_db),
+                         user: User = Depends(require_roles("admin", "ict"))) -> dict:
     if confirmation != "STAGE RESTORE":
         raise HTTPException(status_code=422, detail="Type STAGE RESTORE to confirm recovery staging")
     if not (file.filename or "").lower().endswith(".edubak"):
@@ -348,7 +519,35 @@ async def restore_backup(file: UploadFile = File(...), passphrase: str = Form(..
     data = await file.read(251 * 1024 * 1024)
     if len(data) > 250 * 1024 * 1024:
         raise HTTPException(status_code=413, detail="Backup exceeds the 250 MB recovery limit")
-    return stage_secure_restore(data, passphrase)
+    result = stage_secure_restore(data, passphrase)
+    add_audit(db, user, "Stage Restore", "BackupRestore", file.filename,
+              "Integrity-checked restore package staged for controlled application", {}, result, commit=True)
+    return result
+
+
+@app.get("/api/admin/backup-schedule")
+def backup_schedule(db: Session = Depends(get_db),
+                    _: User = Depends(require_roles("admin", "ict"))) -> dict:
+    value = get_json(db, "backup.schedule", {"enabled": False, "frequency": "Daily", "run_time": "18:00:00",
+                                               "retention_count": 14, "destination": ""})
+    return {**value, "passphrase_configured": bool(get_secret(db, "backup.schedule.passphrase", ""))}
+
+
+@app.put("/api/admin/backup-schedule")
+def save_backup_schedule(payload: BackupSchedulePayload, db: Session = Depends(get_db),
+                         user: User = Depends(require_roles("admin", "ict"))) -> dict:
+    before = get_json(db, "backup.schedule", {})
+    if payload.enabled and not (payload.passphrase or get_secret(db, "backup.schedule.passphrase", "")):
+        raise HTTPException(status_code=422, detail="A backup passphrase is required before scheduling backups")
+    value = {"enabled": payload.enabled, "frequency": payload.frequency,
+             "run_time": payload.run_time.isoformat(), "retention_count": payload.retention_count,
+             "destination": payload.destination.strip()}
+    set_json(db, "backup.schedule", value, commit=False)
+    if payload.passphrase:
+        set_secret(db, "backup.schedule.passphrase", payload.passphrase)
+    add_audit(db, user, "Update", "BackupSchedule", "backup.schedule",
+              "Encrypted backup schedule updated", before, value, commit=True)
+    return {**value, "passphrase_configured": bool(get_secret(db, "backup.schedule.passphrase", ""))}
 
 
 @app.post("/api/biometrics/enroll/{person_id}")
@@ -441,17 +640,81 @@ def train(db: Session = Depends(get_db), _: User = Depends(require_roles("admin"
 @app.get("/api/biometrics/status")
 def biometric_status(db: Session = Depends(get_db), _: User = Depends(current_user)) -> dict:
     active = db.scalar(select(BiometricModel).where(BiometricModel.active.is_(True)).order_by(BiometricModel.id.desc()))
+    runtime = biometric_service.runtime_config(db)
     return {
         "enabled": settings.biometric_enabled, "minimum_samples": settings.min_samples,
-        "threshold": settings.lbph_threshold,
+        **runtime,
         "model": None if not active else {"version": active.version, "person_count": active.person_count,
                                             "sample_count": active.sample_count, "created_at": active.created_at},
     }
 
 
+@app.put("/api/biometrics/runtime-settings")
+def save_biometric_runtime_settings(payload: BiometricRuntimeSettingsPayload, db: Session = Depends(get_db),
+                                    user: User = Depends(require_roles("admin"))) -> dict:
+    before = biometric_service.runtime_config(db)
+    value = payload.model_dump()
+    set_json(db, "biometric.runtime", value, commit=False)
+    add_audit(db, user, "Update", "BiometricRuntimeSettings", "biometric.runtime",
+              "Recognition threshold and liveness controls updated", before, value)
+    db.commit()
+    return value
+
+
+@app.get("/api/biometrics/reviews")
+def recognition_reviews(status: str | None = "Open", db: Session = Depends(get_db),
+                        _: User = Depends(require_roles("admin", "records_officer", "privacy_officer"))) -> list[dict]:
+    query = select(RecognitionReview)
+    if status:
+        query = query.where(RecognitionReview.status == status)
+    items = db.scalars(query.order_by(RecognitionReview.last_seen_at.desc()).limit(1000)).all()
+    return [{"id": item.id, "candidate_person_id": item.candidate_person_id,
+             "candidate_name": item.candidate_name, "review_type": item.review_type,
+             "reason": item.reason, "distance": item.distance, "quality_score": item.quality_score,
+             "occurrence_count": item.occurrence_count, "status": item.status,
+             "resolution_note": item.resolution_note, "resolved_by_name": item.resolved_by_name,
+             "last_seen_at": item.last_seen_at, "created_at": item.created_at,
+             "resolved_at": item.resolved_at} for item in items]
+
+
+@app.post("/api/biometrics/reviews/{review_id}/resolve")
+def resolve_recognition_review(review_id: str, payload: RecognitionReviewResolutionPayload,
+                               db: Session = Depends(get_db),
+                               user: User = Depends(require_roles("admin", "records_officer", "privacy_officer"))) -> dict:
+    item = db.get(RecognitionReview, review_id)
+    if not item:
+        raise HTTPException(status_code=404, detail="Recognition review was not found")
+    before = model_snapshot(item)
+    item.status = payload.status
+    item.resolution_note = payload.note.strip()
+    item.resolved_by = user.id
+    item.resolved_by_name = user.full_name
+    item.resolved_at = datetime.utcnow()
+    add_audit(db, user, "Resolve", "RecognitionReview", item.id,
+              f"Recognition review marked {payload.status}", before, model_snapshot(item))
+    db.commit()
+    return {"id": item.id, "status": item.status}
+
+
+@app.get("/api/station/health")
+def station_health(db: Session = Depends(get_db),
+                   _: User = Depends(require_roles("admin", "scanner", "records_officer", "privacy_officer", "ict"))) -> dict:
+    database_ok = True
+    try:
+        db.execute(select(1))
+    except Exception:
+        database_ok = False
+    active = db.scalar(select(BiometricModel).where(BiometricModel.active.is_(True)).order_by(BiometricModel.id.desc()))
+    gateway = gateway_diagnostics(db)
+    return {"api": True, "database": database_ok,
+            "recognition_model": bool(active), "model_version": active.version if active else None,
+            "gateway_enabled": gateway["enabled"], "gateway_reachable": gateway["reachable"],
+            "checked_at": datetime.utcnow()}
+
+
 @app.post("/api/biometrics/recognize", response_model=RecognitionResult)
 async def recognize(background_tasks: BackgroundTasks, frame: UploadFile = File(...), db: Session = Depends(get_db),
-                    _: User = Depends(require_roles("admin", "scanner"))) -> RecognitionResult:
+                    user: User = Depends(require_roles("admin", "scanner"))) -> RecognitionResult:
     person, distance, quality = biometric_service.recognize(db, await frame.read())
     if person is None:
         return RecognitionResult(recognized=False, message="Face was not recognized with sufficient confidence",
@@ -470,19 +733,29 @@ async def recognize(background_tasks: BackgroundTasks, frame: UploadFile = File(
 @app.post("/api/biometrics/recognize-many")
 async def recognize_many(background_tasks: BackgroundTasks, frame: UploadFile = File(...),
                          db: Session = Depends(get_db),
-                         _: User = Depends(require_roles("admin", "scanner"))) -> dict:
+                         user: User = Depends(require_roles("admin", "scanner"))) -> dict:
     matches = biometric_service.recognize_many(db, await frame.read())
     results = []
-    for person, distance, quality, box in matches:
+    for match in matches:
+        person, distance, quality, box = match["person"], match["distance"], match["quality"], match["box"]
         if person is None:
-            results.append({"recognized": False, "message": "Face was not recognized with sufficient confidence",
+            results.append({"recognized": False, "liveness_verified": False,
+                            "message": match["message"], "review_id": match["review_id"],
                             "distance": round(distance, 2), "quality_score": quality, "box": box})
+            continue
+        if not match["liveness_verified"]:
+            results.append({"recognized": True, "liveness_verified": False, "message": match["message"],
+                            "review_id": match["review_id"],
+                            "person": {"id": person.id, "full_name": person.full_name, "role": person.role},
+                            "distance": round(distance, 2), "quality_score": quality,
+                            "attendance_event": {"recorded": False}, "box": box})
             continue
         event = record_gate_match(db, person, distance)
         if event.get("recorded"):
             if event.get("sms_id"):
                 background_tasks.add_task(dispatch_record_by_id, event["sms_id"])
-        results.append({"recognized": True, "message": event["message"] if not event.get("recorded") else "Identity verified and attendance recorded",
+        results.append({"recognized": True, "liveness_verified": True,
+                        "message": event["message"] if not event.get("recorded") else "Identity and liveness verified; attendance recorded",
                         "person": {"id": person.id, "full_name": person.full_name, "role": person.role},
                         "distance": round(distance, 2), "quality_score": quality,
                         "attendance_event": event, "box": box})
@@ -493,66 +766,178 @@ async def recognize_many(background_tasks: BackgroundTasks, frame: UploadFile = 
 
 
 @app.get("/api/attendance")
-def attendance(day: date = Query(alias="date"), db: Session = Depends(get_db),
-               _: User = Depends(require_roles("admin", "teacher"))) -> list[dict]:
-    return list_rows(db, day)
+def attendance(day: date = Query(alias="date"), grade: str | None = None, section: str | None = None,
+               db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "teacher", "records_officer"))) -> list[dict]:
+    if user.role == "teacher":
+        allowed = {(item.grade_level.name, item.name) for item in adviser_sections(db, user)}
+        if grade and section:
+            ensure_adviser_access(db, user, grade, section)
+            return list_rows(db, day, grade, section, students_only=True)
+        return [row for row in list_rows(db, day, students_only=True) if (row["grade"], row["section"]) in allowed]
+    return list_rows(db, day, grade, section, students_only=bool(grade or section))
 
 
 @app.get("/api/gate/recent")
 def gate_recent(day: date = Query(alias="date"), db: Session = Depends(get_db),
-                _: User = Depends(require_roles("admin", "scanner"))) -> list[dict]:
-    events = db.scalars(select(AttendanceEvent).where(
+                 _: User = Depends(require_roles("admin", "scanner"))) -> list[dict]:
+    query = select(AttendanceEvent).where(
         AttendanceEvent.event_date == day, AttendanceEvent.direction.in_(["Time In", "Time Out"]),
-    ).order_by(AttendanceEvent.created_at.desc()).limit(30)).all()
+    )
+    reset = latest_day_reset(db, day)
+    if reset:
+        query = query.where(AttendanceEvent.created_at > reset.created_at)
+    events = db.scalars(query.order_by(AttendanceEvent.created_at.desc()).limit(30)).all()
     return [{"id": item.id, "name": item.person.full_name, "role": item.person.role,
              "direction": item.direction, "status": item.status, "time": item.event_time} for item in events]
 
 
 @app.post("/api/attendance/close")
-def attendance_close(background_tasks: BackgroundTasks, day: date = Query(alias="date"), db: Session = Depends(get_db),
-                     _: User = Depends(require_roles("admin", "teacher"))) -> dict:
-    created = close_day(db, day)
+def attendance_close(background_tasks: BackgroundTasks, day: date = Query(alias="date"), grade: str | None = None,
+                     section: str | None = None, db: Session = Depends(get_db),
+                     user: User = Depends(require_roles("admin", "teacher"))) -> dict:
+    if user.role == "teacher":
+        if not grade or not section:
+            raise HTTPException(status_code=422, detail="Teachers must select their assigned grade and section")
+        ensure_adviser_access(db, user, grade, section)
+    created = close_day(db, day, grade, section)
     generate_temporary_log(db, day)
     background_tasks.add_task(dispatch_outbox)
     return {"created": created}
 
 
 @app.get("/api/attendance/corrections")
-def corrections(db: Session = Depends(get_db), _: User = Depends(require_roles("admin", "teacher"))) -> list[dict]:
+def corrections(db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "teacher"))) -> list[dict]:
     items = db.scalars(select(AttendanceCorrection).order_by(AttendanceCorrection.created_at.desc()).limit(500)).all()
+    if user.role == "teacher":
+        allowed = {(item.grade_level.name, item.name) for item in adviser_sections(db, user)}
+        items = [item for item in items if (item.person.grade, item.person.section) in allowed]
     return [correction_json(item) for item in items]
 
 
 @app.post("/api/attendance/corrections")
 def correct(payload: AttendanceCorrectionPayload, db: Session = Depends(get_db),
-            user: User = Depends(require_roles("admin", "teacher"))) -> dict:
+             user: User = Depends(require_roles("admin", "teacher"))) -> dict:
+    person = db.get(Person, payload.person_id)
+    if not person:
+        raise HTTPException(status_code=404, detail="Person was not found")
+    if user.role == "teacher":
+        ensure_adviser_access(db, user, person.grade or "", person.section or "")
     item = save_correction(db, payload, user)
     generate_temporary_log(db, payload.attendance_date)
     return correction_json(item)
 
 
 @app.get("/api/attendance/temporary-log")
-def temporary_log(day: date = Query(alias="date"), db: Session = Depends(get_db),
-                  _: User = Depends(require_roles("admin", "teacher"))) -> FileResponse:
-    path = generate_temporary_log(db, day)
-    return FileResponse(path, filename=path.name, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+def temporary_log(day: date = Query(alias="date"), grade: str | None = None, section: str | None = None,
+                  db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "teacher", "records_officer"))) -> FileResponse:
+    if bool(grade) != bool(section):
+        raise HTTPException(status_code=422, detail="Select both grade and section, or neither for the all-school log")
+    if user.role == "teacher":
+        if not grade or not section:
+            raise HTTPException(status_code=422, detail="Teachers must select an assigned grade and section")
+        ensure_adviser_access(db, user, grade, section)
+    path = generate_temporary_log(db, day, grade, section)
+    report = register_report(db, path, "Temporary Attendance Log", {"date": day, "grade": grade, "section": section}, user)
+    return FileResponse(report.file_path, filename=report.filename, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+
+@app.get("/api/attendance/report.xlsx")
+def attendance_report_xlsx(starts_on: date, ends_on: date, role: str | None = None, grade: str | None = None,
+                           section: str | None = None, person_id: int | None = None,
+                           db: Session = Depends(get_db),
+                           user: User = Depends(require_roles("admin", "teacher", "records_officer"))) -> FileResponse:
+    if user.role == "teacher":
+        if not grade or not section:
+            raise HTTPException(status_code=422, detail="Teachers must select an assigned grade and section")
+        ensure_adviser_access(db, user, grade, section)
+        role = "Student"
+    path = generate_attendance_range_xlsx(db, starts_on, ends_on, role, grade, section, person_id)
+    parameters = {"starts_on": starts_on, "ends_on": ends_on, "role": role, "grade": grade,
+                  "section": section, "person_id": person_id}
+    report = register_report(db, path, "Attendance Range", parameters, user)
+    return FileResponse(report.file_path, filename=report.filename,
+                        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+
+@app.get("/api/attendance/report/print", response_class=HTMLResponse)
+def attendance_report_print(starts_on: date, ends_on: date, role: str | None = None, grade: str | None = None,
+                            section: str | None = None, person_id: int | None = None,
+                            db: Session = Depends(get_db),
+                            user: User = Depends(require_roles("admin", "teacher", "records_officer"))) -> HTMLResponse:
+    if user.role == "teacher":
+        if not grade or not section:
+            raise HTTPException(status_code=422, detail="Teachers must select an assigned grade and section")
+        ensure_adviser_access(db, user, grade, section)
+        role = "Student"
+    return HTMLResponse(attendance_report_html(db, starts_on, ends_on, role, grade, section, person_id))
+
+
+@app.post("/api/attendance/reset")
+def attendance_reset(payload: AttendanceResetPayload, db: Session = Depends(get_db),
+                     user: User = Depends(require_roles("admin"))) -> dict:
+    if payload.confirmation != payload.attendance_date.isoformat():
+        raise HTTPException(status_code=422, detail="Type the attendance date exactly to confirm the clean slate")
+    audit = reset_day(db, payload.attendance_date, payload.reason, user)
+    generate_temporary_log(db, payload.attendance_date)
+    return reset_json(audit)
+
+
+@app.get("/api/attendance/resets")
+def attendance_resets(db: Session = Depends(get_db), _: User = Depends(require_roles("admin"))) -> list[dict]:
+    items = db.scalars(select(AttendanceResetAudit).order_by(AttendanceResetAudit.created_at.desc()).limit(200)).all()
+    return [reset_json(item) for item in items]
 
 
 @app.get("/api/schedules")
-def schedules(db: Session = Depends(get_db), _: User = Depends(current_user)) -> list[dict]:
+def schedules(db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "teacher"))) -> list[dict]:
+    items = db.scalars(select(ClassSchedule).order_by(
+        ClassSchedule.grade, ClassSchedule.section, ClassSchedule.start_time,
+    )).all()
+    if user.role == "teacher":
+        allowed = {(item.grade_level.name, item.name) for item in adviser_sections(db, user)}
+        items = [item for item in items if (item.grade, item.section) in allowed]
     return [{"id": item.id, "grade": item.grade, "section": item.section, "subject": item.subject,
              "teacher_name": item.teacher_name, "weekdays": item.weekdays, "start_time": item.start_time,
-             "end_time": item.end_time, "late_grace_minutes": item.late_grace_minutes, "active": item.active}
-            for item in db.scalars(select(ClassSchedule).order_by(ClassSchedule.grade, ClassSchedule.section, ClassSchedule.start_time)).all()]
+             "end_time": item.end_time, "late_grace_minutes": item.late_grace_minutes,
+             "absence_cutoff": item.absence_cutoff, "active": item.active}
+            for item in items]
 
 
 @app.post("/api/schedules")
 def save_schedule(payload: SchedulePayload, db: Session = Depends(get_db),
-                  _: User = Depends(require_roles("admin", "teacher"))) -> dict:
+                  user: User = Depends(require_roles("admin", "teacher"))) -> dict:
+    grade_level = db.scalar(select(GradeLevel).where(GradeLevel.name == payload.grade, GradeLevel.active.is_(True)))
+    if not grade_level or not db.scalar(select(SchoolSection.id).where(
+        SchoolSection.grade_level_id == grade_level.id, SchoolSection.name == payload.section,
+        SchoolSection.active.is_(True),
+    )):
+        raise HTTPException(status_code=422, detail="Select an active grade level and section")
+    if not db.scalar(select(Subject.id).where(Subject.name == payload.subject, Subject.active.is_(True))):
+        raise HTTPException(status_code=422, detail="Select an active subject")
+    if user.role == "teacher":
+        ensure_adviser_access(db, user, payload.grade, payload.section)
     record = db.get(ClassSchedule, payload.id) if payload.id else ClassSchedule()
+    if payload.id and not record:
+        raise HTTPException(status_code=404, detail="Schedule was not found")
+    if user.role == "teacher" and payload.id:
+        ensure_adviser_access(db, user, record.grade, record.section)
+    duplicate = db.scalar(select(ClassSchedule.id).where(
+        ClassSchedule.grade == payload.grade, ClassSchedule.section == payload.section,
+        ClassSchedule.subject == payload.subject, ClassSchedule.weekdays == payload.weekdays,
+        ClassSchedule.id != (payload.id or 0),
+    ))
+    if duplicate:
+        raise HTTPException(status_code=409, detail="An equivalent class schedule already exists")
+    before = model_snapshot(record) if payload.id else {}
     for key, value in payload.model_dump(exclude={"id"}).items():
         setattr(record, key, value)
+    if user.role == "teacher":
+        record.teacher_name = user.full_name
     db.add(record)
+    db.flush()
+    add_audit(db, user, "Update" if payload.id else "Create", "ClassSchedule", record.id,
+              f"Class schedule {'updated' if payload.id else 'created'} for Grade {record.grade} {record.section}",
+              before, model_snapshot(record))
     db.commit()
     db.refresh(record)
     return {"id": record.id}
@@ -560,18 +945,75 @@ def save_schedule(payload: SchedulePayload, db: Session = Depends(get_db),
 
 @app.delete("/api/schedules/{schedule_id}")
 def remove_schedule(schedule_id: int, db: Session = Depends(get_db),
-                    _: User = Depends(require_roles("admin", "teacher"))) -> dict:
+                    user: User = Depends(require_roles("admin", "teacher"))) -> dict:
     record = db.get(ClassSchedule, schedule_id)
     if not record:
         raise HTTPException(status_code=404, detail="Schedule was not found")
+    if user.role == "teacher":
+        ensure_adviser_access(db, user, record.grade, record.section)
+    before = model_snapshot(record)
     db.delete(record)
+    add_audit(db, user, "Delete", "ClassSchedule", record.id,
+              f"Class schedule removed for Grade {record.grade} {record.section}", before, {})
+    db.commit()
+    return {"deleted": True}
+
+
+@app.get("/api/personnel-schedules")
+def personnel_schedules(db: Session = Depends(get_db),
+                        _: User = Depends(require_roles("admin"))) -> list[dict]:
+    items = db.scalars(select(PersonnelSchedule).order_by(
+        PersonnelSchedule.role, PersonnelSchedule.assignment, PersonnelSchedule.start_time,
+    )).all()
+    return [{"id": item.id, "role": item.role, "assignment": item.assignment,
+             "weekdays": item.weekdays, "start_time": item.start_time, "end_time": item.end_time,
+             "late_grace_minutes": item.late_grace_minutes, "absence_cutoff": item.absence_cutoff,
+             "active": item.active} for item in items]
+
+
+@app.post("/api/personnel-schedules")
+def save_personnel_schedule(payload: PersonnelSchedulePayload, db: Session = Depends(get_db),
+                            actor: User = Depends(require_roles("admin"))) -> dict:
+    assignment = payload.assignment.strip() if payload.assignment and payload.assignment.strip() else None
+    item = db.get(PersonnelSchedule, payload.id) if payload.id else PersonnelSchedule()
+    if payload.id and not item:
+        raise HTTPException(status_code=404, detail="Personnel schedule was not found")
+    duplicate = db.scalar(select(PersonnelSchedule.id).where(
+        PersonnelSchedule.role == payload.role,
+        PersonnelSchedule.assignment == assignment,
+        PersonnelSchedule.weekdays == payload.weekdays,
+        PersonnelSchedule.id != (payload.id or 0),
+    ))
+    if duplicate:
+        raise HTTPException(status_code=409, detail="An equivalent personnel schedule already exists")
+    before = model_snapshot(item) if payload.id else {}
+    for key, value in payload.model_dump(exclude={"id", "assignment"}).items():
+        setattr(item, key, value)
+    item.assignment = assignment
+    db.add(item); db.flush()
+    add_audit(db, actor, "Update" if payload.id else "Create", "PersonnelSchedule", item.id,
+              f"Personnel schedule {'updated' if payload.id else 'created'} for {item.role}", before, model_snapshot(item))
+    db.commit(); db.refresh(item)
+    return {"id": item.id}
+
+
+@app.delete("/api/personnel-schedules/{schedule_id}")
+def remove_personnel_schedule(schedule_id: int, db: Session = Depends(get_db),
+                              actor: User = Depends(require_roles("admin"))) -> dict:
+    item = db.get(PersonnelSchedule, schedule_id)
+    if not item:
+        raise HTTPException(status_code=404, detail="Personnel schedule was not found")
+    before = model_snapshot(item)
+    db.delete(item)
+    add_audit(db, actor, "Delete", "PersonnelSchedule", item.id,
+              f"Personnel schedule removed for {item.role}", before, {})
     db.commit()
     return {"deleted": True}
 
 
 @app.get("/api/calendar/exceptions")
 def calendar_exceptions(db: Session = Depends(get_db),
-                        _: User = Depends(require_roles("admin", "teacher"))) -> list[dict]:
+                        _: User = Depends(require_roles("admin"))) -> list[dict]:
     items = db.scalars(select(CalendarException).order_by(CalendarException.event_date.desc())).all()
     return [{"id": item.id, "event_date": item.event_date, "event_type": item.event_type,
              "reason": item.reason, "start_time": item.start_time, "end_time": item.end_time,
@@ -581,8 +1023,9 @@ def calendar_exceptions(db: Session = Depends(get_db),
 
 @app.post("/api/calendar/exceptions")
 def save_calendar_exception(payload: CalendarExceptionPayload, db: Session = Depends(get_db),
-                            user: User = Depends(require_roles("admin", "teacher"))) -> dict:
+                            user: User = Depends(require_roles("admin"))) -> dict:
     item = db.scalar(select(CalendarException).where(CalendarException.event_date == payload.event_date))
+    before = model_snapshot(item) if item else {}
     if not item:
         item = CalendarException(id=str(uuid.uuid4()), event_date=payload.event_date,
                                  actor_user_id=user.id, actor_name=user.full_name)
@@ -590,24 +1033,34 @@ def save_calendar_exception(payload: CalendarExceptionPayload, db: Session = Dep
         raise HTTPException(status_code=422, detail="A special schedule requires a start time")
     for key, value in payload.model_dump(exclude={"event_date"}).items():
         setattr(item, key, value)
-    db.add(item); db.commit()
+    db.add(item)
+    add_audit(db, user, "Update" if before else "Create", "CalendarException", item.id,
+              f"{payload.event_type} calendar exception saved for {payload.event_date}", before, model_snapshot(item))
+    db.commit()
     return {"id": item.id}
 
 
 @app.delete("/api/calendar/exceptions/{exception_id}")
 def delete_calendar_exception(exception_id: str, db: Session = Depends(get_db),
-                              _: User = Depends(require_roles("admin", "teacher"))) -> dict:
+                              actor: User = Depends(require_roles("admin"))) -> dict:
     item = db.get(CalendarException, exception_id)
     if not item:
         raise HTTPException(status_code=404, detail="Calendar exception was not found")
-    db.delete(item); db.commit()
+    before = model_snapshot(item)
+    db.delete(item)
+    add_audit(db, actor, "Delete", "CalendarException", item.id,
+              f"Calendar exception removed for {item.event_date}", before, {})
+    db.commit()
     return {"deleted": True}
 
 
 @app.get("/api/attendance/excused")
 def excused_absences(db: Session = Depends(get_db),
-                     _: User = Depends(require_roles("admin", "teacher"))) -> list[dict]:
+                     user: User = Depends(require_roles("admin", "teacher"))) -> list[dict]:
     items = db.scalars(select(ExcusedAbsence).order_by(ExcusedAbsence.event_date.desc(), ExcusedAbsence.created_at.desc())).all()
+    if user.role == "teacher":
+        allowed = {(item.grade_level.name, item.name) for item in adviser_sections(db, user)}
+        items = [item for item in items if (item.person.grade, item.person.section) in allowed]
     return [{"id": item.id, "person_id": item.person_id, "person_name": item.person.full_name,
              "event_date": item.event_date, "reason": item.reason, "actor_name": item.actor_name,
              "created_at": item.created_at} for item in items]
@@ -617,8 +1070,10 @@ def excused_absences(db: Session = Depends(get_db),
 def save_excused_absence(payload: ExcusedAbsencePayload, db: Session = Depends(get_db),
                          user: User = Depends(require_roles("admin", "teacher"))) -> dict:
     person = db.get(Person, payload.person_id)
-    if not person:
-        raise HTTPException(status_code=404, detail="Person was not found")
+    if not person or person.role != "Student":
+        raise HTTPException(status_code=404, detail="Student was not found")
+    if user.role == "teacher":
+        ensure_adviser_access(db, user, person.grade or "", person.section or "")
     item = db.scalar(select(ExcusedAbsence).where(
         ExcusedAbsence.person_id == payload.person_id, ExcusedAbsence.event_date == payload.event_date,
     ))
@@ -631,21 +1086,29 @@ def save_excused_absence(payload: ExcusedAbsencePayload, db: Session = Depends(g
 
 @app.delete("/api/attendance/excused/{excused_id}")
 def delete_excused_absence(excused_id: str, db: Session = Depends(get_db),
-                           _: User = Depends(require_roles("admin", "teacher"))) -> dict:
+                           user: User = Depends(require_roles("admin", "teacher"))) -> dict:
     item = db.get(ExcusedAbsence, excused_id)
     if not item:
         raise HTTPException(status_code=404, detail="Excused absence was not found")
+    if user.role == "teacher":
+        ensure_adviser_access(db, user, item.person.grade or "", item.person.section or "")
     db.delete(item); db.commit()
     return {"deleted": True}
 
 
 @app.get("/api/admin/academic-structure")
-def academic_structure(db: Session = Depends(get_db), _: User = Depends(current_user)) -> dict:
+def academic_structure(db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "teacher", "records_officer"))) -> dict:
     years = db.scalars(select(SchoolYear).order_by(SchoolYear.starts_on.desc())).all()
     periods = db.scalars(select(GradingPeriod).order_by(GradingPeriod.school_year_id.desc(), GradingPeriod.quarter)).all()
     grades = db.scalars(select(GradeLevel).order_by(GradeLevel.sequence, GradeLevel.name)).all()
     sections = db.scalars(select(SchoolSection).order_by(SchoolSection.grade_level_id, SchoolSection.name)).all()
     subjects = db.scalars(select(Subject).order_by(Subject.name)).all()
+    if user.role == "teacher":
+        allowed_sections = adviser_sections(db, user)
+        allowed_section_ids = {item.id for item in allowed_sections}
+        allowed_grade_ids = {item.grade_level_id for item in allowed_sections}
+        sections = [item for item in sections if item.id in allowed_section_ids]
+        grades = [item for item in grades if item.id in allowed_grade_ids]
     return {
         "school_years": [{"id": item.id, "name": item.name, "starts_on": item.starts_on, "ends_on": item.ends_on, "active": item.active} for item in years],
         "grading_periods": [{"id": item.id, "school_year_id": item.school_year_id, "school_year": item.school_year.name,
@@ -653,19 +1116,24 @@ def academic_structure(db: Session = Depends(get_db), _: User = Depends(current_
                              "ends_on": item.ends_on, "active": item.active} for item in periods],
         "grade_levels": [{"id": item.id, "name": item.name, "sequence": item.sequence, "active": item.active} for item in grades],
         "sections": [{"id": item.id, "grade_level_id": item.grade_level_id, "grade": item.grade_level.name,
-                      "name": item.name, "adviser_name": item.adviser_name, "active": item.active} for item in sections],
+                      "name": item.name, "adviser_user_id": item.adviser_user_id,
+                      "adviser_name": item.adviser_name, "active": item.active} for item in sections],
         "subjects": [{"id": item.id, "code": item.code, "name": item.name, "active": item.active} for item in subjects],
     }
 
 
-def _save_reference(db: Session, model, payload, exclude: set[str] = {"id"}) -> dict:
+def _save_reference(db: Session, model, payload, actor: User, exclude: set[str] = {"id"}) -> dict:
     item = db.get(model, payload.id) if payload.id else model()
     if payload.id and not item:
         raise HTTPException(status_code=404, detail="Reference record was not found")
+    before = model_snapshot(item) if payload.id else {}
     for key, value in payload.model_dump(exclude=exclude).items():
         setattr(item, key, value)
     try:
-        db.add(item); db.commit(); db.refresh(item)
+        db.add(item); db.flush()
+        add_audit(db, actor, "Update" if payload.id else "Create", model.__name__, item.id,
+                  f"{model.__name__} {'updated' if payload.id else 'created'}", before, model_snapshot(item))
+        db.commit(); db.refresh(item)
     except IntegrityError as exc:
         db.rollback()
         raise HTTPException(status_code=409, detail="A matching reference record already exists") from exc
@@ -673,39 +1141,46 @@ def _save_reference(db: Session, model, payload, exclude: set[str] = {"id"}) -> 
 
 
 @app.post("/api/admin/school-years")
-def save_school_year(payload: SchoolYearPayload, db: Session = Depends(get_db), _: User = Depends(require_roles("admin"))) -> dict:
+def save_school_year(payload: SchoolYearPayload, db: Session = Depends(get_db), actor: User = Depends(require_roles("admin"))) -> dict:
     if payload.ends_on <= payload.starts_on:
         raise HTTPException(status_code=422, detail="School year end date must follow its start date")
-    return _save_reference(db, SchoolYear, payload)
+    return _save_reference(db, SchoolYear, payload, actor)
 
 
 @app.post("/api/admin/grading-periods")
-def save_grading_period(payload: GradingPeriodPayload, db: Session = Depends(get_db), _: User = Depends(require_roles("admin"))) -> dict:
+def save_grading_period(payload: GradingPeriodPayload, db: Session = Depends(get_db), actor: User = Depends(require_roles("admin"))) -> dict:
     if payload.ends_on <= payload.starts_on or not db.get(SchoolYear, payload.school_year_id):
         raise HTTPException(status_code=422, detail="Grading-period dates or school year are invalid")
-    return _save_reference(db, GradingPeriod, payload)
+    return _save_reference(db, GradingPeriod, payload, actor)
 
 
 @app.post("/api/admin/grade-levels")
-def save_grade_level(payload: GradeLevelPayload, db: Session = Depends(get_db), _: User = Depends(require_roles("admin"))) -> dict:
-    return _save_reference(db, GradeLevel, payload)
+def save_grade_level(payload: GradeLevelPayload, db: Session = Depends(get_db), actor: User = Depends(require_roles("admin"))) -> dict:
+    return _save_reference(db, GradeLevel, payload, actor)
 
 
 @app.post("/api/admin/sections")
-def save_section(payload: SectionPayload, db: Session = Depends(get_db), _: User = Depends(require_roles("admin"))) -> dict:
+def save_section(payload: SectionPayload, db: Session = Depends(get_db), actor: User = Depends(require_roles("admin"))) -> dict:
     if not db.get(GradeLevel, payload.grade_level_id):
         raise HTTPException(status_code=422, detail="Grade level was not found")
-    return _save_reference(db, SchoolSection, payload)
+    if payload.adviser_user_id is not None:
+        adviser = db.get(User, payload.adviser_user_id)
+        if not adviser or adviser.role != "teacher" or not adviser.active:
+            raise HTTPException(status_code=422, detail="Select an active teacher account as adviser")
+        payload.adviser_name = adviser.full_name
+    else:
+        payload.adviser_name = None
+    return _save_reference(db, SchoolSection, payload, actor)
 
 
 @app.post("/api/admin/subjects")
-def save_subject(payload: SubjectPayload, db: Session = Depends(get_db), _: User = Depends(require_roles("admin"))) -> dict:
-    return _save_reference(db, Subject, payload)
+def save_subject(payload: SubjectPayload, db: Session = Depends(get_db), actor: User = Depends(require_roles("admin"))) -> dict:
+    return _save_reference(db, Subject, payload, actor)
 
 
 @app.delete("/api/admin/reference/{kind}/{record_id}")
 def delete_reference(kind: str, record_id: int, db: Session = Depends(get_db),
-                     _: User = Depends(require_roles("admin"))) -> dict:
+                     actor: User = Depends(require_roles("admin"))) -> dict:
     models = {"school-years": SchoolYear, "grading-periods": GradingPeriod, "grade-levels": GradeLevel,
               "sections": SchoolSection, "subjects": Subject}
     model = models.get(kind)
@@ -714,8 +1189,11 @@ def delete_reference(kind: str, record_id: int, db: Session = Depends(get_db),
     item = db.get(model, record_id)
     if not item:
         raise HTTPException(status_code=404, detail="Reference record was not found")
+    before = model_snapshot(item)
     try:
-        db.delete(item); db.commit()
+        db.delete(item)
+        add_audit(db, actor, "Delete", model.__name__, record_id, f"{model.__name__} deleted", before, {})
+        db.commit()
     except IntegrityError as exc:
         db.rollback()
         raise HTTPException(status_code=409, detail="This record is still referenced; deactivate it instead") from exc
@@ -736,11 +1214,14 @@ def read_settings(db: Session = Depends(get_db), _: User = Depends(require_roles
 
 @app.put("/api/settings/attendance")
 def save_attendance_settings(payload: AttendanceSettingsPayload, db: Session = Depends(get_db),
-                             _: User = Depends(require_roles("admin"))) -> dict:
+                             user: User = Depends(require_roles("admin"))) -> dict:
+    before = get_json(db, "attendance", {})
     value = {"absence_cutoff": payload.absence_cutoff.strftime("%H:%M"),
              "duplicate_cooldown_seconds": payload.duplicate_cooldown_seconds,
              "auto_close_enabled": payload.auto_close_enabled}
     set_json(db, "attendance", value)
+    add_audit(db, user, "Update", "AttendanceSettings", "attendance",
+              "Attendance settings updated", before, value, commit=True)
     return value
 
 
@@ -751,35 +1232,214 @@ def run_automatic_close(_: User = Depends(require_roles("admin"))) -> dict:
 
 @app.put("/api/settings/sms")
 def save_sms_settings(payload: SmsSettingsPayload, db: Session = Depends(get_db),
-                      _: User = Depends(require_roles("admin"))) -> dict:
+                      user: User = Depends(require_roles("admin"))) -> dict:
+    before = {key: value for key, value in sms_config(db).items() if key != "password"}
     set_json(db, "sms", {"enabled": payload.enabled, "gateway_url": payload.gateway_url, "username": payload.username,
                          "school_contact": payload.school_contact,
+                         "max_messages_per_30_minutes": payload.max_messages_per_30_minutes,
                          "templates": {"time_in": payload.time_in_template, "time_out": payload.time_out_template,
                                        "tardiness": payload.tardiness_template, "absence": payload.absence_template}})
     if payload.password is not None:
         set_secret(db, "sms.password", payload.password)
+    after = {key: value for key, value in sms_config(db).items() if key != "password"}
+    add_audit(db, user, "Update", "SmsSettings", "sms", "SMS gateway settings updated", before, after, commit=True)
     return {"saved": True}
 
 
 @app.put("/api/settings/compliance")
 def save_compliance(payload: CompliancePayload, db: Session = Depends(get_db),
-                    _: User = Depends(require_roles("admin"))) -> dict:
+                    user: User = Depends(require_roles("admin", "privacy_officer"))) -> dict:
+    before = get_json(db, "compliance", {})
     set_json(db, "compliance", payload.model_dump())
+    add_audit(db, user, "Update", "ComplianceSettings", "compliance",
+              "Compliance evidence register updated", before, payload.model_dump(), commit=True)
     return payload.model_dump()
 
 
+@app.get("/api/settings/compliance")
+def read_compliance(db: Session = Depends(get_db),
+                    _: User = Depends(require_roles("admin", "privacy_officer"))) -> dict:
+    return get_json(db, "compliance", {})
+
+
+@app.get("/api/retention")
+def get_retention(db: Session = Depends(get_db),
+                  _: User = Depends(require_roles("admin", "privacy_officer"))) -> dict:
+    return retention_policy(db)
+
+
+@app.put("/api/retention")
+def save_retention(payload: RetentionPolicyPayload, db: Session = Depends(get_db),
+                   user: User = Depends(require_roles("admin", "privacy_officer"))) -> dict:
+    before = retention_policy(db)
+    value = payload.model_dump()
+    set_json(db, "retention", value)
+    add_audit(db, user, "Update", "RetentionPolicy", "retention",
+              "Retention policy updated", before, value, commit=True)
+    return value
+
+
+@app.get("/api/retention/preview")
+def preview_retention(db: Session = Depends(get_db),
+                      _: User = Depends(require_roles("admin", "privacy_officer"))) -> dict:
+    return public_preview(retention_preview(db))
+
+
+@app.post("/api/retention/execute")
+def run_retention(payload: RetentionExecutionPayload, db: Session = Depends(get_db),
+                  user: User = Depends(require_roles("admin", "privacy_officer"))) -> dict:
+    if payload.confirmation != "EXECUTE RETENTION":
+        raise HTTPException(status_code=422, detail="Type EXECUTE RETENTION to confirm the approved cleanup")
+    item = execute_retention(db, payload.authorization_reference, user)
+    return {"id": item.id, "certificate_reference": item.certificate_reference,
+            "removed_counts": json.loads(item.removed_counts_json), "created_at": item.created_at}
+
+
+@app.get("/api/retention/executions")
+def retention_executions(db: Session = Depends(get_db),
+                         _: User = Depends(require_roles("admin", "privacy_officer"))) -> list[dict]:
+    items = db.scalars(select(RetentionExecution).order_by(RetentionExecution.created_at.desc()).limit(500)).all()
+    return [{"id": item.id, "certificate_reference": item.certificate_reference,
+             "authorization_reference": item.authorization_reference,
+             "removed_counts": json.loads(item.removed_counts_json), "actor_name": item.actor_name,
+             "created_at": item.created_at} for item in items]
+
+
+@app.get("/api/legal-holds")
+def legal_holds(db: Session = Depends(get_db),
+                _: User = Depends(require_roles("admin", "privacy_officer"))) -> list[dict]:
+    items = db.scalars(select(LegalHold).order_by(LegalHold.active.desc(), LegalHold.created_at.desc())).all()
+    return [{"id": item.id, "scope": item.scope, "subject_reference": item.subject_reference,
+             "reason": item.reason, "authority_reference": item.authority_reference, "active": item.active,
+             "placed_by_name": item.placed_by_name, "released_by_name": item.released_by_name,
+             "release_reason": item.release_reason, "released_at": item.released_at,
+             "created_at": item.created_at} for item in items]
+
+
+@app.post("/api/legal-holds")
+def create_legal_hold(payload: LegalHoldPayload, db: Session = Depends(get_db),
+                      user: User = Depends(require_roles("admin", "privacy_officer"))) -> dict:
+    item = LegalHold(id=str(uuid.uuid4()), scope=payload.scope, subject_reference=payload.subject_reference,
+                     reason=payload.reason.strip(), authority_reference=payload.authority_reference.strip(),
+                     placed_by=user.id, placed_by_name=user.full_name)
+    db.add(item)
+    add_audit(db, user, "Create", "LegalHold", item.id, f"Legal hold placed for {payload.scope}", {}, model_snapshot(item))
+    db.commit()
+    return {"id": item.id}
+
+
+@app.post("/api/legal-holds/{hold_id}/release")
+def release_legal_hold(hold_id: str, payload: LegalHoldReleasePayload, db: Session = Depends(get_db),
+                       user: User = Depends(require_roles("admin", "privacy_officer"))) -> dict:
+    item = db.get(LegalHold, hold_id)
+    if not item or not item.active:
+        raise HTTPException(status_code=404, detail="Active legal hold was not found")
+    before = model_snapshot(item)
+    item.active = False
+    item.released_by = user.id
+    item.released_by_name = user.full_name
+    item.release_reason = payload.reason.strip()
+    item.released_at = datetime.utcnow()
+    add_audit(db, user, "Release", "LegalHold", item.id, payload.reason, before, model_snapshot(item))
+    db.commit()
+    return {"released": True}
+
+
+@app.get("/api/audit")
+def system_audit(entity_type: str | None = None, action: str | None = None,
+                 limit: int = Query(default=500, ge=1, le=2000), db: Session = Depends(get_db),
+                 _: User = Depends(require_roles("admin", "records_officer", "privacy_officer"))) -> list[dict]:
+    query = select(SystemAuditEvent)
+    if entity_type:
+        query = query.where(SystemAuditEvent.entity_type == entity_type)
+    if action:
+        query = query.where(SystemAuditEvent.action == action)
+    items = db.scalars(query.order_by(SystemAuditEvent.created_at.desc()).limit(limit)).all()
+    return [{"id": item.id, "action": item.action, "entity_type": item.entity_type,
+             "entity_id": item.entity_id, "summary": item.summary,
+             "before": json.loads(item.before_json), "after": json.loads(item.after_json),
+             "actor_name": item.actor_name, "actor_role": item.actor_role,
+             "created_at": item.created_at} for item in items]
+
+
 @app.get("/api/sms/outbox")
-def outbox(db: Session = Depends(get_db), _: User = Depends(require_roles("admin"))) -> list[dict]:
+def outbox(db: Session = Depends(get_db), _: User = Depends(require_roles("admin", "records_officer"))) -> list[dict]:
     items = db.scalars(select(SmsOutbox).order_by(SmsOutbox.created_at.desc()).limit(500)).all()
     return [{"id": item.id, "event_type": item.event_type, "recipient": mask_phone(item.recipient),
              "message": item.message, "status": item.status, "attempts": item.attempts,
-             "last_error": item.last_error, "created_at": item.created_at, "sent_at": item.sent_at} for item in items]
+             "last_error": item.last_error, "next_attempt_at": item.next_attempt_at,
+             "gateway_message_id": item.gateway_message_id,
+             "created_at": item.created_at, "sent_at": item.sent_at,
+             "delivered_at": item.delivered_at, "cancelled_at": item.cancelled_at,
+             "exhausted_at": item.exhausted_at,
+             "gateway_status_checked_at": item.gateway_status_checked_at} for item in items]
+
+
+@app.get("/api/sms/gateway/check")
+def check_sms_gateway(db: Session = Depends(get_db), _: User = Depends(require_roles("admin"))) -> dict:
+    return gateway_diagnostics(db)
 
 
 @app.post("/api/sms/dispatch")
 def dispatch(db: Session = Depends(get_db), _: User = Depends(require_roles("admin"))) -> dict:
     records = dispatch_queued(db)
-    return {"processed": len(records), "sent": sum(record.status == "sent" for record in records)}
+    return {"processed": len(records), "accepted": sum(record.status == "accepted" for record in records)}
+
+
+@app.post("/api/sms/reconcile")
+def reconcile_sms(db: Session = Depends(get_db),
+                  user: User = Depends(require_roles("admin", "records_officer"))) -> dict:
+    records = reconcile_outbox(db)
+    add_audit(db, user, "Reconcile", "SmsOutbox", None,
+              f"Reconciled {len(records)} Android gateway message(s)", {},
+              {"processed": len(records)}, commit=True)
+    return {"processed": len(records), "statuses": {
+        status: sum(item.status == status for item in records)
+        for status in ("accepted", "processed", "sent", "delivered", "failed", "cancelled")
+    }}
+
+
+@app.post("/api/sms/outbox/{record_id}/requeue")
+def requeue_sms(record_id: str, db: Session = Depends(get_db),
+                user: User = Depends(require_roles("admin", "records_officer"))) -> dict:
+    record = db.get(SmsOutbox, record_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="SMS outbox record was not found")
+    before = model_snapshot(record)
+    requeue_record(db, record)
+    add_audit(db, user, "Requeue", "SmsOutbox", record.id,
+              "Authorized SMS message requeue", before, model_snapshot(record), commit=True)
+    return {"id": record.id, "status": record.status}
+
+
+@app.post("/api/sms/outbox/{record_id}/cancel")
+def cancel_sms(record_id: str, db: Session = Depends(get_db),
+               user: User = Depends(require_roles("admin", "records_officer"))) -> dict:
+    record = db.get(SmsOutbox, record_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="SMS outbox record was not found")
+    before = model_snapshot(record)
+    cancel_record(db, record)
+    add_audit(db, user, "Cancel", "SmsOutbox", record.id,
+              "Authorized obsolete SMS cancellation", before, model_snapshot(record), commit=True)
+    return {"id": record.id, "status": record.status}
+
+
+@app.get("/api/sms/outbox.csv")
+def export_sms_outbox(db: Session = Depends(get_db),
+                      _: User = Depends(require_roles("admin", "records_officer"))) -> StreamingResponse:
+    items = db.scalars(select(SmsOutbox).order_by(SmsOutbox.created_at.desc())).all()
+    output = io.StringIO(newline="")
+    writer = csv.writer(output)
+    writer.writerow(["Created", "Event", "Recipient", "Status", "Attempts", "Gateway ID",
+                     "Accepted/Sent", "Delivered", "Cancelled", "Last error", "Message"])
+    for item in items:
+        writer.writerow([item.created_at, item.event_type, item.recipient, item.status, item.attempts,
+                         item.gateway_message_id or "", item.sent_at or "", item.delivered_at or "",
+                         item.cancelled_at or "", item.last_error or "", item.message])
+    filename = f"EduScan-SMS-delivery-log-{datetime.now().strftime('%Y%m%d-%H%M%S')}.csv"
+    return StreamingResponse(iter([output.getvalue()]), media_type="text/csv; charset=utf-8",
+                             headers={"Content-Disposition": f'attachment; filename="{filename}"'})
 
 
 @app.post("/api/sms/test")
@@ -795,7 +1455,7 @@ def test_sms(phone: str = Form(...), message: str = Form("EduScan Android gatewa
 
 
 @app.get("/api/sf2/template")
-def sf2_status(_: User = Depends(require_roles("admin", "teacher"))) -> dict:
+def sf2_status(_: User = Depends(require_roles("admin", "teacher", "records_officer"))) -> dict:
     try:
         path = template_path()
         return {"configured": True, "filename": path.name}
@@ -814,11 +1474,65 @@ async def upload_sf2(file: UploadFile = File(...), _: User = Depends(require_rol
 @app.get("/api/sf2/export")
 def sf2_export(year: int, month: int, grade: str, section: str, school_id: str = "",
                school_year: str = "", school_name: str = "SAN JOSE NATIONAL HIGH SCHOOL",
-               db: Session = Depends(get_db), _: User = Depends(require_roles("admin", "teacher"))) -> FileResponse:
+               db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "teacher", "records_officer"))) -> FileResponse:
     if not 1 <= month <= 12:
         raise HTTPException(status_code=422, detail="Month must be between 1 and 12")
+    ensure_adviser_access(db, user, grade, section)
     path = generate_sf2(db, year, month, grade, section, school_id, school_year, school_name)
-    return FileResponse(path, filename=path.name, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    report = register_report(db, path, "Official SF2", {"year": year, "month": month, "grade": grade,
+                                                         "section": section, "school_id": school_id,
+                                                         "school_year": school_year}, user)
+    return FileResponse(report.file_path, filename=report.filename,
+                        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+
+def report_json(item: GeneratedReport) -> dict:
+    return {"id": item.id, "report_type": item.report_type, "filename": item.filename,
+            "sha256": item.file_sha256, "parameters": json.loads(item.parameters_json),
+            "status": item.status, "generated_by_name": item.generated_by_name,
+            "reviewed_by_name": item.reviewed_by_name, "review_note": item.review_note,
+            "reviewed_at": item.reviewed_at, "created_at": item.created_at}
+
+
+@app.get("/api/reports/history")
+def report_history(db: Session = Depends(get_db),
+                   user: User = Depends(require_roles("admin", "teacher", "records_officer", "privacy_officer"))) -> list[dict]:
+    items = db.scalars(select(GeneratedReport).order_by(GeneratedReport.created_at.desc()).limit(1000)).all()
+    if user.role == "teacher":
+        allowed = {(item.grade_level.name, item.name) for item in adviser_sections(db, user)}
+        items = [item for item in items if item.generated_by == user.id or
+                 (lambda p: (str(p.get("grade") or ""), str(p.get("section") or "")) in allowed)(json.loads(item.parameters_json))]
+    return [report_json(item) for item in items]
+
+
+@app.get("/api/reports/history/{report_id}/download")
+def download_generated_report(report_id: str, db: Session = Depends(get_db),
+                              user: User = Depends(require_roles("admin", "teacher", "records_officer"))) -> FileResponse:
+    item = db.get(GeneratedReport, report_id)
+    if not item or not Path(item.file_path).is_file():
+        raise HTTPException(status_code=404, detail="Generated report file was not found")
+    if user.role == "teacher":
+        parameters = json.loads(item.parameters_json)
+        ensure_adviser_access(db, user, str(parameters.get("grade") or ""), str(parameters.get("section") or ""))
+    return FileResponse(item.file_path, filename=item.filename)
+
+
+@app.post("/api/reports/history/{report_id}/review")
+def review_generated_report(report_id: str, payload: ReportReviewPayload, db: Session = Depends(get_db),
+                            user: User = Depends(require_roles("admin", "records_officer"))) -> dict:
+    item = db.get(GeneratedReport, report_id)
+    if not item:
+        raise HTTPException(status_code=404, detail="Generated report was not found")
+    before = model_snapshot(item)
+    item.status = payload.status
+    item.reviewed_by = user.id
+    item.reviewed_by_name = user.full_name
+    item.review_note = payload.note.strip()
+    item.reviewed_at = datetime.utcnow()
+    add_audit(db, user, "Review", "GeneratedReport", item.id,
+              f"Report marked {payload.status}: {payload.note}", before, model_snapshot(item))
+    db.commit()
+    return report_json(item)
 
 
 def gradebook_data(class_key: str, db: Session) -> dict:
@@ -826,25 +1540,38 @@ def gradebook_data(class_key: str, db: Session) -> dict:
     component_ids = [item.id for item in components]
     scores = db.scalars(select(GradeScore).where(GradeScore.component_id.in_(component_ids))).all() if component_ids else []
     grouped_scores: dict[str, dict[str, float]] = {}
+    grouped_statuses: dict[str, dict[str, str]] = {}
     for score in scores:
         grouped_scores.setdefault(str(score.person_id), {})[str(score.component_id)] = score.score
+        grouped_statuses.setdefault(str(score.person_id), {})[str(score.component_id)] = score.status
     rules = get_json(db, f"gradebook:{class_key}:rules", {"passing_grade": 75, "school_year": "2026-2027",
                                                             "quarter": 1, "subject": "Unspecified"})
+    state = db.get(GradebookState, class_key)
     return {
         "class_key": class_key,
-        "passing_grade": rules.get("passing_grade", 75),
-        "school_year": rules.get("school_year", "2026-2027"),
-        "quarter": rules.get("quarter", 1),
-        "subject": rules.get("subject", "Unspecified"),
+        "passing_grade": state.passing_grade if state else rules.get("passing_grade", 75),
+        "school_year": state.school_year if state else rules.get("school_year", "2026-2027"),
+        "quarter": state.quarter if state else rules.get("quarter", 1),
+        "subject": state.subject if state else rules.get("subject", "Unspecified"),
+        "grade": state.grade if state else rules.get("grade", ""),
+        "section": state.section if state else rules.get("section", ""),
+        "status": state.status if state else "Draft",
+        "finalized_at": state.finalized_at if state else None,
+        "finalized_by_name": state.finalized_by_name if state else None,
         "components": [{"id": str(item.id), "category": item.category, "label": item.label, "weight": item.weight,
                         "max_score": item.max_score, "sequence": item.sequence} for item in components],
         "scores": grouped_scores,
+        "score_statuses": grouped_statuses,
     }
 
 
 @app.get("/api/gradebook/{class_key}")
-def read_gradebook(class_key: str, db: Session = Depends(get_db),
-                   _: User = Depends(require_roles("admin", "teacher"))) -> dict:
+def read_gradebook(class_key: str, grade: str = "", section: str = "", db: Session = Depends(get_db),
+                   user: User = Depends(require_roles("admin", "teacher", "records_officer"))) -> dict:
+    if user.role == "teacher":
+        if not grade or not section:
+            raise HTTPException(status_code=422, detail="Grade and section are required for adviser access control")
+        ensure_adviser_access(db, user, grade, section)
     return gradebook_data(class_key, db)
 
 
@@ -853,33 +1580,90 @@ def save_gradebook(class_key: str, payload: GradebookPayload, db: Session = Depe
                    user: User = Depends(require_roles("admin", "teacher"))) -> dict:
     if payload.class_key != class_key:
         raise HTTPException(status_code=422, detail="Class key does not match URL")
-    weighted = [item for item in payload.components if item.get("category") != "Manual Overall"]
-    if round(sum(float(item.get("weight", 0)) for item in weighted), 4) != 100:
+    ensure_adviser_access(db, user, payload.grade, payload.section)
+    existing_state = db.get(GradebookState, class_key)
+    if existing_state and existing_state.status == "Finalized":
+        raise HTTPException(status_code=409, detail="This gradebook is finalized. An administrator or records officer must reopen it with a reason before changes are allowed")
+    year = db.scalar(select(SchoolYear).where(SchoolYear.name == payload.school_year, SchoolYear.active.is_(True)))
+    if not year or not db.scalar(select(GradingPeriod.id).where(
+        GradingPeriod.school_year_id == year.id, GradingPeriod.quarter == payload.quarter,
+        GradingPeriod.active.is_(True),
+    )):
+        raise HTTPException(status_code=422, detail="Select an active school year and grading period")
+    grade_level = db.scalar(select(GradeLevel).where(GradeLevel.name == payload.grade, GradeLevel.active.is_(True)))
+    school_section = db.scalar(select(SchoolSection).where(
+        SchoolSection.grade_level_id == grade_level.id, SchoolSection.name == payload.section,
+        SchoolSection.active.is_(True),
+    )) if grade_level else None
+    if not school_section:
+        raise HTTPException(status_code=422, detail="Select an active grade level and section")
+    if not db.scalar(select(Subject.id).where(Subject.name == payload.subject, Subject.active.is_(True))):
+        raise HTTPException(status_code=422, detail="Select an active subject")
+
+    component_ids = [item.id for item in payload.components]
+    if len(component_ids) != len(set(component_ids)):
+        raise HTTPException(status_code=422, detail="Grade component identifiers must be unique")
+    manual = [item for item in payload.components if item.category == "Manual Overall"]
+    if len(manual) > 1 or any(item.weight != 0 for item in manual):
+        raise HTTPException(status_code=422, detail="Only one zero-weight Manual Overall component is allowed")
+    weighted = [item for item in payload.components if item.category != "Manual Overall"]
+    if not weighted or round(sum(item.weight for item in weighted), 4) != 100:
         raise HTTPException(status_code=422, detail="Grade component weights must total exactly 100%")
+    allowed_people = set(db.scalars(select(Person.id).where(
+        Person.role == "Student", Person.active.is_(True), Person.grade == payload.grade,
+        Person.section == payload.section,
+    )).all())
+    submitted_people = {int(person_id) for person_id in payload.scores}
+    if not submitted_people.issubset(allowed_people):
+        raise HTTPException(status_code=422, detail="Gradebook contains a learner outside the selected active section")
     before = gradebook_data(class_key, db)
     old_ids = list(db.scalars(select(GradeComponent.id).where(GradeComponent.class_key == class_key)).all())
     if old_ids:
         db.execute(delete(GradeScore).where(GradeScore.component_id.in_(old_ids)))
         db.execute(delete(GradeComponent).where(GradeComponent.id.in_(old_ids)))
     key_map: dict[str, int] = {}
+    maximums: dict[str, float] = {}
     for sequence, item in enumerate(payload.components):
-        record = GradeComponent(class_key=class_key, category=str(item.get("category", "Assessment")),
-                                label=str(item.get("label", f"Assessment {sequence + 1}")),
-                                weight=float(item.get("weight", 0)), max_score=float(item.get("max_score", 100)), sequence=sequence)
+        record = GradeComponent(class_key=class_key, category=item.category.strip(), label=item.label.strip(),
+                                weight=item.weight, max_score=item.max_score, sequence=sequence)
         db.add(record)
         db.flush()
-        key_map[str(item.get("id", sequence))] = record.id
+        key_map[item.id] = record.id
+        maximums[item.id] = item.max_score
     for person_id, person_scores in payload.scores.items():
-        for client_id, score in person_scores.items():
-            if client_id not in key_map or score in ("", None):
+        submitted_statuses = payload.score_statuses.get(person_id, {})
+        for client_id in set(person_scores) | set(submitted_statuses):
+            score = person_scores.get(client_id)
+            if client_id not in key_map:
                 continue
-            numeric = float(score)
-            if numeric < 0:
-                raise HTTPException(status_code=422, detail="Scores cannot be negative")
-            db.add(GradeScore(person_id=int(person_id), component_id=key_map[client_id], score=numeric, updated_by=user.id))
+            status = submitted_statuses.get(client_id, "Scored" if score not in ("", None) else "Missing")
+            if status != "Scored":
+                db.add(GradeScore(person_id=int(person_id), component_id=key_map[client_id], score=0,
+                                  status=status, updated_by=user.id))
+                continue
+            if score in ("", None):
+                raise HTTPException(status_code=422, detail="A score marked Scored must contain a numeric value")
+            try:
+                numeric = float(score)
+            except (TypeError, ValueError) as exc:
+                raise HTTPException(status_code=422, detail="Every entered score must be numeric") from exc
+            if not math.isfinite(numeric) or numeric < 0 or numeric > maximums[client_id]:
+                raise HTTPException(status_code=422, detail=f"A score must be between 0 and {maximums[client_id]:g}")
+            db.add(GradeScore(person_id=int(person_id), component_id=key_map[client_id], score=numeric,
+                              status="Scored", updated_by=user.id))
     db.flush()
     set_json(db, f"gradebook:{class_key}:rules", {"passing_grade": payload.passing_grade,
-             "school_year": payload.school_year, "quarter": payload.quarter, "subject": payload.subject}, commit=False)
+             "school_year": payload.school_year, "quarter": payload.quarter, "subject": payload.subject,
+             "grade": payload.grade, "section": payload.section}, commit=False)
+    state = existing_state or GradebookState(class_key=class_key)
+    state.school_year = payload.school_year
+    state.quarter = payload.quarter
+    state.subject = payload.subject
+    state.grade = payload.grade
+    state.section = payload.section
+    state.passing_grade = payload.passing_grade
+    state.status = "Draft"
+    db.add(state)
     after = gradebook_data(class_key, db)
     db.add(GradeChangeAudit(id=str(uuid.uuid4()), class_key=class_key, school_year=payload.school_year,
                            quarter=payload.quarter, subject=payload.subject, reason=payload.change_reason.strip(),
@@ -889,9 +1673,82 @@ def save_gradebook(class_key: str, payload: GradebookPayload, db: Session = Depe
     return {"saved": True, "component_count": len(key_map)}
 
 
+@app.post("/api/gradebook/{class_key}/finalize")
+def finalize_gradebook(class_key: str, payload: GradebookActionPayload, db: Session = Depends(get_db),
+                       user: User = Depends(require_roles("admin", "teacher"))) -> dict:
+    state = db.get(GradebookState, class_key)
+    if not state:
+        raise HTTPException(status_code=404, detail="Save the gradebook before finalizing it")
+    ensure_adviser_access(db, user, state.grade, state.section)
+    if state.status == "Finalized":
+        return {"finalized": True, "already_finalized": True}
+    summary = gradebook_summary(db, class_key)
+    if summary["statistics"]["incomplete"]:
+        raise HTTPException(status_code=409, detail=f"{summary['statistics']['incomplete']} learner(s) still have missing, excused, incomplete, or blank assessment results")
+    before = model_snapshot(state)
+    state.status = "Finalized"
+    state.finalized_by = user.id
+    state.finalized_by_name = user.full_name
+    state.finalized_at = datetime.utcnow()
+    state.reopen_reason = None
+    add_audit(db, user, "Finalize", "Gradebook", class_key, payload.reason, before, model_snapshot(state))
+    db.commit()
+    return {"finalized": True, "finalized_at": state.finalized_at}
+
+
+@app.post("/api/gradebook/{class_key}/reopen")
+def reopen_gradebook(class_key: str, payload: GradebookActionPayload, db: Session = Depends(get_db),
+                     user: User = Depends(require_roles("admin", "records_officer"))) -> dict:
+    state = db.get(GradebookState, class_key)
+    if not state:
+        raise HTTPException(status_code=404, detail="Gradebook was not found")
+    if state.status != "Finalized":
+        raise HTTPException(status_code=409, detail="Only a finalized gradebook can be reopened")
+    before = model_snapshot(state)
+    state.status = "Draft"
+    state.reopened_by = user.id
+    state.reopened_by_name = user.full_name
+    state.reopened_at = datetime.utcnow()
+    state.reopen_reason = payload.reason.strip()
+    add_audit(db, user, "Reopen", "Gradebook", class_key, payload.reason, before, model_snapshot(state))
+    db.commit()
+    return {"reopened": True}
+
+
+@app.get("/api/gradebook/{class_key}/report.xlsx")
+def gradebook_report_xlsx(class_key: str, grade: str = "", section: str = "", db: Session = Depends(get_db),
+                          user: User = Depends(require_roles("admin", "teacher", "records_officer"))) -> FileResponse:
+    state = db.get(GradebookState, class_key)
+    if not state:
+        raise HTTPException(status_code=404, detail="Gradebook was not found")
+    if user.role == "teacher":
+        ensure_adviser_access(db, user, grade or state.grade, section or state.section)
+    path = generate_grade_report_xlsx(db, class_key)
+    report = register_report(db, path, "Grading Summary", {"class_key": class_key, "grade": state.grade, "section": state.section,
+                                                             "school_year": state.school_year, "quarter": state.quarter,
+                                                             "subject": state.subject}, user)
+    return FileResponse(report.file_path, filename=report.filename,
+                        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+
+@app.get("/api/gradebook/{class_key}/report/print", response_class=HTMLResponse)
+def gradebook_report_print(class_key: str, grade: str = "", section: str = "", db: Session = Depends(get_db),
+                           user: User = Depends(require_roles("admin", "teacher", "records_officer"))) -> HTMLResponse:
+    state = db.get(GradebookState, class_key)
+    if not state:
+        raise HTTPException(status_code=404, detail="Gradebook was not found")
+    if user.role == "teacher":
+        ensure_adviser_access(db, user, grade or state.grade, section or state.section)
+    return HTMLResponse(grade_report_html(db, class_key))
+
+
 @app.get("/api/gradebook/{class_key}/audit")
-def gradebook_audit(class_key: str, db: Session = Depends(get_db),
-                    _: User = Depends(require_roles("admin", "teacher"))) -> list[dict]:
+def gradebook_audit(class_key: str, grade: str = "", section: str = "", db: Session = Depends(get_db),
+                    user: User = Depends(require_roles("admin", "teacher", "records_officer"))) -> list[dict]:
+    if user.role == "teacher":
+        if not grade or not section:
+            raise HTTPException(status_code=422, detail="Grade and section are required for adviser access control")
+        ensure_adviser_access(db, user, grade, section)
     items = db.scalars(select(GradeChangeAudit).where(GradeChangeAudit.class_key == class_key)
                        .order_by(GradeChangeAudit.created_at.desc()).limit(200)).all()
     return [{"id": item.id, "school_year": item.school_year, "quarter": item.quarter,
@@ -902,7 +1759,7 @@ def gradebook_audit(class_key: str, db: Session = Depends(get_db),
 
 @app.get("/api/dashboard")
 def dashboard(day: date = Query(default_factory=date.today), db: Session = Depends(get_db),
-              _: User = Depends(require_roles("admin", "teacher"))) -> dict:
+              _: User = Depends(require_roles("admin"))) -> dict:
     rows = list_rows(db, day)
     events = db.scalars(select(AttendanceEvent).where(AttendanceEvent.event_date == day).order_by(AttendanceEvent.created_at.desc()).limit(20)).all()
     return {
@@ -910,16 +1767,19 @@ def dashboard(day: date = Query(default_factory=date.today), db: Session = Depen
         "events": [{"id": item.id, "person": item.person.full_name, "role": item.person.role, "time": item.event_time,
                     "direction": item.direction, "status": item.status} for item in events],
         "sms": {status: db.scalar(select(func.count(SmsOutbox.id)).where(SmsOutbox.status == status)) or 0
-                for status in ("queued", "sent", "failed")},
+                for status in ("queued", "accepted", "processed", "sent", "delivered", "failed", "exhausted", "cancelled")},
     }
 
 
 @app.get("/api/interventions")
 def interventions(days: int = 90, threshold: int = 5, db: Session = Depends(get_db),
-                  _: User = Depends(require_roles("admin", "teacher"))) -> list[dict]:
+                  user: User = Depends(require_roles("admin", "teacher"))) -> list[dict]:
     if not 1 <= days <= 366 or not 1 <= threshold <= 100:
         raise HTTPException(status_code=422, detail="Intervention range is invalid")
     students = db.scalars(select(Person).where(Person.active.is_(True), Person.role == "Student").order_by(Person.full_name)).all()
+    if user.role == "teacher":
+        allowed = {(item.grade_level.name, item.name) for item in adviser_sections(db, user)}
+        students = [person for person in students if (person.grade, person.section) in allowed]
     end = date.today()
     start = end - timedelta(days=days - 1)
     absence_dates: dict[int, list[date]] = {person.id: [] for person in students}
@@ -927,8 +1787,8 @@ def interventions(days: int = 90, threshold: int = 5, db: Session = Depends(get_
     while cursor <= end:
         if cursor.weekday() < 5:
             for row in list_rows(db, cursor):
-                if row["role"] == "Student" and row["status"] == "Absent":
-                    absence_dates.setdefault(row["person_id"], []).append(cursor)
+                if row["person_id"] in absence_dates and row["status"] == "Absent":
+                    absence_dates[row["person_id"]].append(cursor)
         cursor += timedelta(days=1)
     result = []
     for person in students:
@@ -948,6 +1808,8 @@ def add_intervention(payload: InterventionPayload, db: Session = Depends(get_db)
     person = db.get(Person, payload.person_id)
     if not person or person.role != "Student":
         raise HTTPException(status_code=404, detail="Student was not found")
+    if user.role == "teacher":
+        ensure_adviser_access(db, user, person.grade or "", person.section or "")
     import uuid
     item = Intervention(id=str(uuid.uuid4()), person_id=person.id, intervention_type=payload.intervention_type.strip(),
                         note=payload.note.strip(), actor_user_id=user.id, actor_name=user.full_name)

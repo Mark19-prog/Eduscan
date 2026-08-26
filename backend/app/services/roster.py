@@ -4,6 +4,7 @@ import hashlib
 import io
 import re
 import uuid
+from datetime import date, datetime
 
 from fastapi import HTTPException
 from openpyxl import load_workbook
@@ -23,11 +24,28 @@ HEADER_ALIASES = {
     "section": {"section"},
     "assignment": {"assignment", "office", "department"},
     "guardian_phone": {"guardian phone", "parent phone", "mobile number", "contact number"},
+    "enrollment_status": {"enrollment status", "learner status", "movement status"},
+    "enrollment_start_date": {"enrollment start", "enrollment start date", "transfer in date"},
+    "enrollment_end_date": {"enrollment end", "enrollment end date", "transfer out date"},
+    "transfer_school": {"transfer school", "previous school", "receiving school"},
 }
 
 
 def _normal(value) -> str:
     return re.sub(r"\s+", " ", str(value or "").strip()).casefold()
+
+
+def _date_value(value) -> date | None:
+    if value in (None, ""):
+        return None
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    try:
+        return date.fromisoformat(str(value).strip())
+    except ValueError as exc:
+        raise ValueError("use YYYY-MM-DD") from exc
 
 
 def parse_roster(data: bytes) -> tuple[list[dict], list[dict]]:
@@ -53,8 +71,18 @@ def parse_roster(data: bytes) -> tuple[list[dict], list[dict]]:
     accepted: list[dict] = []
     errors: list[dict] = []
     for row_number, values in enumerate(rows, start=2):
-        record = {field: (str(values[index]).strip() if index < len(values) and values[index] is not None else "")
-                  for index, field in mapped.items()}
+        record = {}
+        date_error = None
+        for index, field in mapped.items():
+            value = values[index] if index < len(values) else None
+            if field in {"enrollment_start_date", "enrollment_end_date"}:
+                try:
+                    record[field] = _date_value(value)
+                except ValueError as exc:
+                    record[field] = None
+                    date_error = f"{field.replace('_', ' ')}: {exc}"
+            else:
+                record[field] = str(value).strip() if value is not None else ""
         if not any(record.values()):
             continue
         record["sex"] = record.get("sex", "").title()
@@ -62,13 +90,19 @@ def parse_roster(data: bytes) -> tuple[list[dict], list[dict]]:
         record["role"] = {"student": "Student", "faculty": "Faculty", "teacher": "Faculty",
                           "non-teaching": "Non-teaching Personnel", "non teaching": "Non-teaching Personnel",
                           "non-teaching personnel": "Non-teaching Personnel"}.get(role, record.get("role", ""))
-        problems = []
+        status = record.get("enrollment_status", "").title() or "Regular"
+        record["enrollment_status"] = status
+        problems = [date_error] if date_error else []
         if len(record.get("external_id", "")) < 2: problems.append("missing school/employee ID")
         if len(record.get("full_name", "")) < 3: problems.append("missing full name")
         if record["sex"] not in {"Male", "Female"}: problems.append("sex must be Male or Female")
         if record["role"] not in {"Student", "Faculty", "Non-teaching Personnel"}: problems.append("invalid role")
         if record["role"] == "Student" and (not record.get("grade") or not record.get("section")):
             problems.append("student grade and section are required")
+        if status not in {"Regular", "Transferred In", "Transferred Out"}:
+            problems.append("enrollment status must be Regular, Transferred In, or Transferred Out")
+        if record.get("enrollment_start_date") and record.get("enrollment_end_date") and record["enrollment_start_date"] > record["enrollment_end_date"]:
+            problems.append("enrollment start date cannot be after enrollment end date")
         if problems:
             errors.append({"row": row_number, "errors": problems})
             continue
@@ -77,6 +111,7 @@ def parse_roster(data: bytes) -> tuple[list[dict], list[dict]]:
         record["section"] = record.get("section") or None
         record["assignment"] = record.get("assignment") or None
         record["guardian_phone"] = record.get("guardian_phone") or None
+        record["transfer_school"] = record.get("transfer_school") or None
         accepted.append(record)
     workbook.close()
     return accepted, errors

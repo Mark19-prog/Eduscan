@@ -15,7 +15,7 @@ dist-ssr
 
 # EduScan backend runtime data and secrets
 backend/.venv/
-backend/.env
+backend/.env*
 backend/data/*
 !backend/data/templates/
 backend/data/templates/*

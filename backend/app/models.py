@@ -16,6 +16,11 @@ class User(Base):
     role: Mapped[str] = mapped_column(String(30), index=True)
     full_name: Mapped[str] = mapped_column(String(160))
     active: Mapped[bool] = mapped_column(Boolean, default=True)
+    must_change_password: Mapped[bool] = mapped_column(Boolean, default=True)
+    failed_login_count: Mapped[int] = mapped_column(Integer, default=0)
+    locked_until: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    password_changed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
@@ -31,6 +36,10 @@ class Person(Base):
     section: Mapped[str | None] = mapped_column(String(80), nullable=True)
     assignment: Mapped[str | None] = mapped_column(String(180), nullable=True)
     guardian_phone: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    enrollment_status: Mapped[str] = mapped_column(String(30), default="Regular")
+    enrollment_start_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    enrollment_end_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    transfer_school: Mapped[str | None] = mapped_column(String(180), nullable=True)
     biometric_consent: Mapped[bool] = mapped_column(Boolean, default=False)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
@@ -48,7 +57,21 @@ class ClassSchedule(Base):
     start_time: Mapped[time] = mapped_column(Time)
     end_time: Mapped[time] = mapped_column(Time)
     late_grace_minutes: Mapped[int] = mapped_column(Integer, default=15)
+    absence_cutoff: Mapped[time | None] = mapped_column(Time, nullable=True)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
+class PersonnelSchedule(Base):
+    __tablename__ = "personnel_schedules"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    role: Mapped[str] = mapped_column(String(40), index=True)
+    assignment: Mapped[str | None] = mapped_column(String(180), nullable=True, index=True)
+    weekdays: Mapped[str] = mapped_column(String(40), default="0,1,2,3,4")
+    start_time: Mapped[time] = mapped_column(Time)
+    end_time: Mapped[time] = mapped_column(Time)
+    late_grace_minutes: Mapped[int] = mapped_column(Integer, default=15)
+    absence_cutoff: Mapped[time | None] = mapped_column(Time, nullable=True)
+    active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
 
 
 class SchoolYear(Base):
@@ -87,6 +110,7 @@ class SchoolSection(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     grade_level_id: Mapped[int] = mapped_column(ForeignKey("grade_levels.id"), index=True)
     name: Mapped[str] = mapped_column(String(80), index=True)
+    adviser_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
     adviser_name: Mapped[str | None] = mapped_column(String(180), nullable=True)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     grade_level: Mapped[GradeLevel] = relationship()
@@ -158,6 +182,19 @@ class AttendanceCorrection(Base):
     person: Mapped[Person] = relationship()
 
 
+class AttendanceResetAudit(Base):
+    __tablename__ = "attendance_reset_audits"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    attendance_date: Mapped[date] = mapped_column(Date, index=True)
+    reason: Mapped[str] = mapped_column(Text)
+    actor_user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    actor_name: Mapped[str] = mapped_column(String(180))
+    actor_role: Mapped[str] = mapped_column(String(30))
+    superseded_event_count: Mapped[int] = mapped_column(Integer, default=0)
+    superseded_correction_count: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+
 class BiometricSample(Base):
     __tablename__ = "biometric_samples"
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
@@ -203,6 +240,7 @@ class BiometricAuditEvent(Base):
 class SmsOutbox(Base):
     __tablename__ = "sms_outbox"
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    idempotency_key: Mapped[str | None] = mapped_column(String(160), unique=True, nullable=True, index=True)
     person_id: Mapped[int | None] = mapped_column(ForeignKey("persons.id"), nullable=True, index=True)
     event_type: Mapped[str] = mapped_column(String(30), index=True)
     recipient: Mapped[str] = mapped_column(String(30))
@@ -211,8 +249,13 @@ class SmsOutbox(Base):
     attempts: Mapped[int] = mapped_column(Integer, default=0)
     gateway_message_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    next_attempt_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
     sent_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    delivered_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    cancelled_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    exhausted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    gateway_status_checked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     person: Mapped[Person | None] = relationship()
 
 
@@ -243,6 +286,7 @@ class GradeScore(Base):
     person_id: Mapped[int] = mapped_column(ForeignKey("persons.id"), index=True)
     component_id: Mapped[int] = mapped_column(ForeignKey("grade_components.id"), index=True)
     score: Mapped[float] = mapped_column(Float)
+    status: Mapped[str] = mapped_column(String(30), default="Scored", index=True)
     updated_by: Mapped[int] = mapped_column(ForeignKey("users.id"))
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -260,6 +304,127 @@ class GradeChangeAudit(Base):
     actor_role: Mapped[str] = mapped_column(String(30))
     before_json: Mapped[str] = mapped_column(Text)
     after_json: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+
+class GradebookState(Base):
+    __tablename__ = "gradebook_states"
+    class_key: Mapped[str] = mapped_column(String(240), primary_key=True)
+    school_year: Mapped[str] = mapped_column(String(30), index=True)
+    quarter: Mapped[int] = mapped_column(Integer, index=True)
+    subject: Mapped[str] = mapped_column(String(120), index=True)
+    grade: Mapped[str] = mapped_column(String(30), index=True)
+    section: Mapped[str] = mapped_column(String(80), index=True)
+    passing_grade: Mapped[int] = mapped_column(Integer, default=75)
+    status: Mapped[str] = mapped_column(String(30), default="Draft", index=True)
+    finalized_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    finalized_by_name: Mapped[str | None] = mapped_column(String(180), nullable=True)
+    finalized_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    reopened_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    reopened_by_name: Mapped[str | None] = mapped_column(String(180), nullable=True)
+    reopened_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    reopen_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class SystemAuditEvent(Base):
+    __tablename__ = "system_audit_events"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    action: Mapped[str] = mapped_column(String(80), index=True)
+    entity_type: Mapped[str] = mapped_column(String(80), index=True)
+    entity_id: Mapped[str | None] = mapped_column(String(160), nullable=True, index=True)
+    summary: Mapped[str] = mapped_column(String(500))
+    before_json: Mapped[str] = mapped_column(Text, default="{}")
+    after_json: Mapped[str] = mapped_column(Text, default="{}")
+    actor_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
+    actor_name: Mapped[str] = mapped_column(String(180))
+    actor_role: Mapped[str] = mapped_column(String(40), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+
+class GeneratedReport(Base):
+    __tablename__ = "generated_reports"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    report_type: Mapped[str] = mapped_column(String(60), index=True)
+    filename: Mapped[str] = mapped_column(String(255))
+    file_path: Mapped[str] = mapped_column(String(600))
+    file_sha256: Mapped[str] = mapped_column(String(64), index=True)
+    parameters_json: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(30), default="Generated", index=True)
+    generated_by: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    generated_by_name: Mapped[str] = mapped_column(String(180))
+    reviewed_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    reviewed_by_name: Mapped[str | None] = mapped_column(String(180), nullable=True)
+    review_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+
+class RecognitionReview(Base):
+    __tablename__ = "recognition_reviews"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    face_signature: Mapped[str] = mapped_column(String(64), index=True)
+    candidate_person_id: Mapped[int | None] = mapped_column(ForeignKey("persons.id"), nullable=True, index=True)
+    candidate_name: Mapped[str | None] = mapped_column(String(180), nullable=True)
+    review_type: Mapped[str] = mapped_column(String(40), index=True)
+    reason: Mapped[str] = mapped_column(Text)
+    distance: Mapped[float | None] = mapped_column(Float, nullable=True)
+    quality_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    occurrence_count: Mapped[int] = mapped_column(Integer, default=1)
+    status: Mapped[str] = mapped_column(String(30), default="Open", index=True)
+    resolved_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    resolved_by_name: Mapped[str | None] = mapped_column(String(180), nullable=True)
+    resolution_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+
+class LegalHold(Base):
+    __tablename__ = "legal_holds"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    scope: Mapped[str] = mapped_column(String(80), index=True)
+    subject_reference: Mapped[str | None] = mapped_column(String(160), nullable=True, index=True)
+    reason: Mapped[str] = mapped_column(Text)
+    authority_reference: Mapped[str] = mapped_column(String(300))
+    active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    placed_by: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    placed_by_name: Mapped[str] = mapped_column(String(180))
+    released_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    released_by_name: Mapped[str | None] = mapped_column(String(180), nullable=True)
+    release_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    released_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+
+class RetentionExecution(Base):
+    __tablename__ = "retention_executions"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    policy_snapshot_json: Mapped[str] = mapped_column(Text)
+    preview_json: Mapped[str] = mapped_column(Text)
+    removed_counts_json: Mapped[str] = mapped_column(Text)
+    authorization_reference: Mapped[str] = mapped_column(String(300))
+    certificate_reference: Mapped[str] = mapped_column(String(120), unique=True, index=True)
+    actor_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    actor_name: Mapped[str] = mapped_column(String(180))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+
+class BackupRun(Base):
+    __tablename__ = "backup_runs"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    trigger: Mapped[str] = mapped_column(String(30), index=True)
+    status: Mapped[str] = mapped_column(String(30), index=True)
+    filename: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    file_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    size_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    database_backend: Mapped[str] = mapped_column(String(30))
+    encryption_key_fingerprint: Mapped[str] = mapped_column(String(64))
+    model_version: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    destination: Mapped[str | None] = mapped_column(String(600), nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    actor_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    actor_name: Mapped[str] = mapped_column(String(180), default="EduScan scheduler")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
 
 

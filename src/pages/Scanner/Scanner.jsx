@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { AlertTriangle, Camera, CheckCircle2, Clock3, LogOut, Maximize2, MessageSquareText, Minimize2, ScanFace, UserPlus } from 'lucide-react';
+import { AlertTriangle, Camera, CheckCircle2, Clock3, KeyRound, LogOut, Maximize2, MessageSquareText, Minimize2, RefreshCw, ScanFace, UserPlus } from 'lucide-react';
 import { api, auth, captureVideoFrame, displayTime, localDate } from '../../api/client';
 import StudentRegistrationModal from '../../components/Scanner/StudentRegistrationModal';
 
@@ -16,6 +16,8 @@ export default function Scanner() {
   const [outboxCount, setOutboxCount] = useState(0);
   const [registrationOpen, setRegistrationOpen] = useState(false);
   const [cameraFullscreen, setCameraFullscreen] = useState(false);
+  const [stationHealth, setStationHealth] = useState({ api: false, database: false, gateway_enabled: false, gateway_reachable: false, recognition_model: false });
+  const [backendReachable, setBackendReachable] = useState(true);
 
   const refreshLog = useCallback(async () => {
     try {
@@ -28,6 +30,15 @@ export default function Scanner() {
   }, []);
 
   useEffect(() => { refreshLog(); }, [refreshLog]);
+  useEffect(() => {
+    let mounted = true;
+    const check = async () => {
+      try { const result = await api.get('/station/health'); if (mounted) { setStationHealth(result); setBackendReachable(true); } }
+      catch { if (mounted) setBackendReachable(false); }
+    };
+    check(); const timer = window.setInterval(check, 10000);
+    return () => { mounted = false; clearInterval(timer); };
+  }, []);
   useEffect(() => () => {
     clearInterval(timerRef.current);
     streamRef.current?.getTracks().forEach((track) => track.stop());
@@ -59,6 +70,7 @@ export default function Scanner() {
       const form = new FormData();
       form.append('frame', blob, `gate-${Date.now()}.jpg`);
       const batch = await api.post('/biometrics/recognize-many', form);
+      setBackendReachable(true);
       const recorded = batch.results.filter((item) => item.attendance_event?.recorded);
       const recognized = batch.results.filter((item) => item.recognized);
       setFeedback({ ok: recorded.length > 0, batch: batch.results,
@@ -68,6 +80,7 @@ export default function Scanner() {
         window.setTimeout(() => setFeedback(null), 7000);
       }
     } catch (err) {
+      if (err.message.includes('backend is not reachable')) setBackendReachable(false);
       setFeedback({ ok: false, message: err.message });
     } finally { busyRef.current = false; }
   }, [refreshLog]);
@@ -79,6 +92,14 @@ export default function Scanner() {
     setScanning(true);
     scanOnce();
     timerRef.current = window.setInterval(scanOnce, 1400);
+  };
+
+  const restartRecognition = () => {
+    clearInterval(timerRef.current); busyRef.current = false; setScanning(false);
+    setFeedback({ ok: true, message: 'Recognition loop restarted in a controlled state. The camera stream remains active.' });
+    window.setTimeout(() => {
+      setScanning(true); scanOnce(); timerRef.current = window.setInterval(scanOnce, 1400);
+    }, 400);
   };
 
   const toggleCameraFullscreen = async () => {
@@ -99,6 +120,7 @@ export default function Scanner() {
         <div className="brand-lockup"><img src="/logo.png" alt="San Jose National High School logo" /><div><h2>EduScan Gate Station</h2><span>San Jose National High School · local biometric station</span></div></div>
         <div className="action-row">
           {auth.role() === 'admin' && <button className="btn-secondary" onClick={() => setRegistrationOpen(true)}><UserPlus size={16} /> Enroll person</button>}
+          <button className="icon-btn" title="Account security" aria-label="Account security" onClick={() => { window.location.href = '/account/security'; }}><KeyRound size={18} /></button>
           <div className="scanner-state"><span className={`status-dot ${scanning ? '' : 'warning-dot'}`} /> {scanning ? 'RECOGNITION ACTIVE' : cameraOn ? 'CAMERA READY' : 'CAMERA OFF'}</div>
           <button className="icon-btn" onClick={logout} title="Sign out"><LogOut size={18} /></button>
         </div>
@@ -106,6 +128,8 @@ export default function Scanner() {
 
       <main className="scanner-main">
         <section className="scanner-stage">
+          {scanning && !backendReachable && <div className="notice notice-danger scanner-backend-warning"><AlertTriangle size={22} /><div><strong>Attendance backend unavailable.</strong> Recognition is paused from recording attendance or SMS notices. Keep people at the gate and use the documented manual attendance fallback until the API is restored.</div></div>}
+          <div className="station-health-strip"><span className={`tag ${backendReachable && stationHealth.database ? 'tag-success' : 'tag-danger'}`}>API / database: {backendReachable && stationHealth.database ? 'ready' : 'unavailable'}</span><span className={`tag ${cameraOn ? 'tag-success' : 'tag-gray'}`}>Camera: {cameraOn ? 'ready' : 'off'}</span><span className={`tag ${stationHealth.gateway_enabled && stationHealth.gateway_reachable ? 'tag-success' : 'tag-warning'}`}>SMS: {stationHealth.gateway_enabled ? stationHealth.gateway_reachable ? 'reachable' : 'unreachable' : 'disabled'}</span><span className={`tag ${stationHealth.recognition_model ? 'tag-success' : 'tag-warning'}`}>LBPH: {stationHealth.recognition_model ? 'ready' : 'model missing'}</span></div>
           <div className="camera-placeholder live-camera" ref={cameraFrameRef}>
             <video ref={videoRef} playsInline muted aria-label="Gate camera preview" />
             {!cameraOn && <div className="camera-frame"><Camera size={78} /><h1>Gate camera</h1><p>Camera frames are processed by the local LBPH server and are not uploaded to a cloud service.</p></div>}
@@ -117,10 +141,11 @@ export default function Scanner() {
           </div>
 
           <div className="scanner-control-panel">
-            <div><p className="eyebrow">Live local processing</p><h2>{cameraOn ? 'Multi-face LBPH recognition station' : 'Start the secured gate camera'}</h2><p>Each recognized person alternates between time-in and time-out, allowing authorized exits and re-entries throughout the day.</p></div>
+            <div><p className="eyebrow">Live local processing</p><h2>{cameraOn ? 'Multi-face LBPH recognition station' : 'Start the secured gate camera'}</h2><p>Each accepted match alternates automatically between time-in and time-out after the duplicate-scan cooldown, supporting later exits and re-entries.</p></div>
             <div className="scanner-control-actions">
               {!cameraOn ? <button className="btn-primary" onClick={startCamera}><Camera size={18} /> Enable camera</button>
                 : <button className={scanning ? 'btn-secondary' : 'btn-primary'} onClick={toggleScanning}><ScanFace size={18} /> {scanning ? 'Pause recognition' : 'Start recognition'}</button>}
+              {cameraOn && <button className="btn-secondary" disabled={!backendReachable} onClick={restartRecognition}><RefreshCw size={18} /> Restart recognition</button>}
               <button className="btn-secondary" onClick={toggleCameraFullscreen}><Maximize2 size={18} /> Expand camera</button>
             </div>
           </div>
@@ -129,7 +154,7 @@ export default function Scanner() {
             <div className={`scan-feedback ${feedback.ok ? 'scan-success' : 'scan-warning'}`}>
               {feedback.ok ? <CheckCircle2 size={24} /> : <AlertTriangle size={24} />}
               <div><strong>{feedback.batch ? 'Multi-face scan result' : feedback.ok ? 'Camera ready' : 'Attention'}</strong>
-                <p>{feedback.message}</p>{feedback.batch?.filter((item) => item.recognized).map((item) => <span className="muted-small" key={`${item.person.id}-${item.distance}`}>{item.person.full_name}: {item.attendance_event?.recorded ? `${item.attendance_event.direction} · ${item.attendance_event.status}` : item.message} · distance {item.distance.toFixed(1)}</span>)}</div>
+                <p>{feedback.message}</p>{feedback.batch?.filter((item) => item.recognized).map((item) => <span className="muted-small" key={`${item.person.id}-${item.distance}`}>{item.person.full_name}: {item.attendance_event?.recorded ? `${item.attendance_event.direction} · ${item.attendance_event.status}` : item.message} · {item.liveness_verified ? 'liveness verified' : 'liveness pending'} · distance {item.distance.toFixed(1)}</span>)}</div>
             </div>
           )}
         </section>

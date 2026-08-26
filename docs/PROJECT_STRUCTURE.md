@@ -6,11 +6,11 @@ This guide explains how EduScan is organized, how a request moves through the sy
 
 EduScan is a local-first client-server application with layered responsibilities:
 
-1. The React client renders role-based administrator, teacher, and gate-scanner interfaces.
+1. The React client renders role-based administrator, teacher, gate-scanner, records-officer, privacy-officer, and ICT interfaces.
 2. `src/api/client.js` sends authenticated HTTP requests to the local FastAPI server.
 3. FastAPI endpoints validate requests, enforce roles, and delegate work to backend services.
 4. Service modules implement attendance, LBPH biometrics, SMS, spreadsheet reporting, imports, backups, disposal, and scheduling.
-5. SQLAlchemy persists structured records in SQLite by default. MySQL can be selected through `DATABASE_URL`.
+5. SQLAlchemy persists structured records in SQLite by default or in the configured MySQL server through `DATABASE_URL`.
 6. Encrypted face samples and LBPH model artifacts are stored outside the web root, while their metadata and audit history are stored in SQL.
 
 The normal single-laptop deployment uses these local addresses:
@@ -19,7 +19,7 @@ The normal single-laptop deployment uses these local addresses:
 - Backend API: `http://127.0.0.1:8000/api`
 - API documentation: `http://127.0.0.1:8000/docs`
 
-Internet access is not required for the core application after dependencies are installed. Android SMS delivery requires only a local network connection to the gateway phone and cellular SMS service. External reference links and the optional Google-hosted font require internet access.
+Internet access is not required for the core application after dependencies are installed. Android SMS delivery requires only a local network connection to the gateway phone and cellular SMS service. External reference links require internet access, but the interface uses offline system fonts.
 
 ## Request and data flow
 
@@ -29,7 +29,7 @@ Browser interface
     -> FastAPI routes in backend/app/main.py
     -> role checks and Pydantic request validation
     -> backend service module
-    -> SQLAlchemy / SQLite and encrypted local artifacts
+    -> SQLAlchemy / SQLite or MySQL and encrypted local artifacts
     -> JSON, XLSX, or file response
     -> browser interface
 ```
@@ -42,8 +42,8 @@ Camera frame
     -> POST /api/biometrics/recognize-many
     -> Haar face detection
     -> LBPH prediction for each detected face
-    -> duplicate suppression and confidence checks
-    -> alternating time-in/time-out attendance event
+    -> duplicate suppression, confidence checks, and blink-based liveness state
+    -> duplicate cooldown and automatic time-in/time-out alternation
     -> optional guardian SMS outbox and Android gateway dispatch
 ```
 
@@ -65,7 +65,7 @@ Camera frame
 ## Frontend entry and shared files
 
 - `src/main.jsx` — mounts the React application and loads the active global stylesheet.
-- `src/App.jsx` — declares application routes and client-side role guards for administrator, teacher, and scanner accounts.
+- `src/App.jsx` — declares application routes and client-side role guards for all six application-account roles.
 - `src/api/client.js` — central API helper, authentication token storage, JSON/FormData handling, camera-frame capture, and local date/time formatting.
 - `src/styles/index.css` — active global design system and responsive styles, including the enlarged scanner camera, multi-face guide, and full-screen presentation.
 - `src/App.css` — original Vite starter stylesheet retained for reference; it is not imported by the current entry point.
@@ -77,21 +77,24 @@ Camera frame
 ## Frontend layouts
 
 - `src/layouts/PublicLayout.jsx` — minimal outlet wrapper for login and the gate-scanner route.
-- `src/layouts/AdminLayout.jsx` — administrator navigation shell for dashboard, attendance, grading, reports, setup, and maintenance.
+- `src/layouts/AdminLayout.jsx` — permission-filtered operations navigation for administrators and the restricted records/privacy/ICT roles.
 - `src/layouts/TeacherLayout.jsx` — teacher navigation shell for advisory reporting, attendance, roster, and interventions.
 
 ## Frontend pages
 
 - `src/pages/Login/Login.jsx` — authenticates a user and redirects them to the interface allowed for their role.
+- `src/pages/Account/AccountSecurity.jsx` — enforces first-use/reset password replacement and supports later owner-initiated password changes.
 - `src/pages/Dashboard/Dashboard.jsx` — administrator summary of daily attendance, gate events, SMS status, and reporting shortcuts.
-- `src/pages/Scanner/Scanner.jsx` — controls camera access, periodic multi-face recognition, recent gate events, enrollment access, and normal/full-screen camera presentation.
-- `src/pages/Attendance/Attendance.jsx` — displays attendance by date and role, runs authorized daily closing, downloads temporary logs, and records attributable corrections.
-- `src/pages/Grading/Grading.jsx` — administrator grading workspace that loads learners and delegates configurable grade handling to the shared grading component.
-- `src/pages/Reports/Reports.jsx` — official SF2 template status, upload, and monthly export interface.
-- `src/pages/Setup/SystemSetup.jsx` — attendance rules, special calendars, SMS gateway configuration, privacy/legal evidence, access rules, and correction procedures.
+- `src/pages/Scanner/Scanner.jsx` — controls camera access, liveness-aware multi-face recognition, service health indicators, controlled recognition restart, recent events, enrollment access, and normal/full-screen presentation.
+- `src/pages/Attendance/Attendance.jsx` — displays all-school or adviser-scoped attendance, groups secondary actions, downloads deduplicated alphabetical logs, runs daily closing or audited clean-slate reset, and records attributable corrections.
+- `src/pages/Grading/Grading.jsx` — shared administrator/teacher grading workspace that loads the selected authorized section and delegates configurable grade handling to the grading component.
+- `src/pages/Reports/Reports.jsx` — date-range student/personnel summaries, official SF2 generation, and hashed report review/approval history.
+- `src/pages/Oversight/Oversight.jsx` — unified audit, recognition review, SMS reconciliation, retention/legal-hold, service-health, and backup-schedule workspace filtered by role.
+- `src/pages/Setup/SystemSetup.jsx` — attendance rules, class and personnel duty schedules, special calendars, SMS gateway configuration and non-sending reachability diagnostics, privacy/legal evidence, access rules, and correction procedures.
 - `src/pages/Administration/Administration.jsx` — administrative CRUD for people, accounts, academic references, roster imports, full record disposal, backups, and restoration.
 - `src/pages/Teacher/SF2Dashboard.jsx` — teacher landing page combining subject selection, attendance, analytics, grade entry, and SF2 access.
 - `src/pages/Teacher/MyAdvisory.jsx` — teacher roster view and learner profile access.
+- `src/pages/Teacher/MySchedules.jsx` — adviser-scoped class schedule creation, editing, meeting-day selection, time-range setup, late-grace configuration, and removal.
 - `src/pages/Teacher/TruancyInterventions.jsx` — identifies repeated absence/tardiness cases and records intervention actions.
 
 ## Frontend components
@@ -101,8 +104,8 @@ Camera frame
 - `src/components/Teacher/SubjectSelector.jsx` — selects the current teacher class/subject context and schedule.
 - `src/components/Teacher/SectionAttendance.jsx` — renders section attendance with learner status interactions.
 - `src/components/Teacher/AdviserAnalyticsWidget.jsx` — summarizes advisory attendance patterns.
-- `src/components/Teacher/GradingModule.jsx` — manages teacher-defined grade components, scores, weighted results, transmutation, and change reasons.
-- `src/components/Teacher/SF2ReportGenerator.jsx` — provides teacher-facing SF2 template and export controls.
+- `src/components/Teacher/GradingModule.jsx` — manages raw/highest scores, exceptional statuses, teacher-defined weights, transmutation, finalization/reopening, report export, and change reasons.
+- `src/components/Teacher/SF2ReportGenerator.jsx` — restricts advisers to assigned sections and provides official SF2 generation plus grouped template and temporary-log support actions.
 - `src/components/Teacher/StudentProfileModal.jsx` — displays an individual learner profile from the roster.
 
 ## Backend foundation
@@ -111,33 +114,46 @@ Camera frame
 - `backend/.env.example` — documented environment-variable template; copy to `.env` locally and never commit actual secrets.
 - `backend/app/__init__.py` — marks the backend application directory as a Python package.
 - `backend/app/main.py` — creates the FastAPI application, starts migrations and background scheduling, seeds references, and defines authenticated API endpoints.
-- `backend/app/config.py` — loads environment settings, resolves data paths, manages the encryption key, and applies a staged restore before database startup.
+- `backend/app/config.py` — loads environment settings, resolves data paths, creates per-installation application/encryption secrets, and safely applies only SQLite staged restores during startup.
 - `backend/app/database.py` — creates the SQLAlchemy engine/session and applies SQLite foreign-key, WAL, and busy-timeout reliability settings.
-- `backend/app/migrations.py` — applies idempotent versioned schema changes and records them in `schema_migrations`.
-- `backend/app/models.py` — SQLAlchemy tables for accounts, people, academics, attendance, biometrics, SMS, grades, imports, disposal, settings, and interventions.
+- `backend/app/migrations.py` — registers every SQLAlchemy model, applies idempotent versioned schema changes, repairs partially upgraded attendance schemas, and records revisions in `schema_migrations`.
+- `backend/app/models.py` — SQLAlchemy tables for accounts, people, class/personnel schedules, academics, attendance, biometrics, SMS, grades, imports, disposal, settings, and interventions.
 - `backend/app/schemas.py` — Pydantic request and response models used to validate API data.
 - `backend/app/auth.py` — password hashing, token creation/validation, current-user resolution, role enforcement, and initial account seeding.
 
 ## Backend services
 
 - `backend/app/services/__init__.py` — marks the services directory as a Python package.
-- `backend/app/services/attendance.py` — instructional-day rules, applicable schedules, late evaluation, repeated gate-event handling, absence closing, and corrections.
-- `backend/app/services/biometrics.py` — image decoding, face quality checks, encrypted sample storage, LBPH training/model integrity, single/multi-face prediction, and audited biometric cleanup.
-- `backend/app/services/sms.py` — message templates, Philippine/international number normalization, outbox creation, Android gateway dispatch, masking, and retry processing.
-- `backend/app/services/sf2.py` — validates and stores the official template, generates temporary logs, fills learner attendance, separates male/female blocks, alphabetizes names, and writes tardy marks.
-- `backend/app/services/roster.py` — validates approved XLSX rosters, normalizes records, imports people, hashes the source file, and records import audits.
-- `backend/app/services/backup.py` — creates passphrase-encrypted backups and verifies/stages two-phase restoration packages.
+- `backend/app/services/attendance.py` — instructional-day rules, adviser/report scoping, unique-ID deduplication, student and personnel schedule selection, late evaluation, automatic repeated gate-event handling, audited day reset, schedule-aware absence closing, and corrections.
+- `backend/app/services/biometrics.py` — image decoding, face/eye checks, encrypted sample storage, LBPH training/model integrity, multi-face prediction, liveness state, non-image review entries, and audited biometric cleanup.
+- `backend/app/services/sms.py` — message templates, number normalization, private-LAN validation, diagnostics, idempotent outbox creation, Android dispatch/delivery reconciliation/cancellation, masking, rate limits, and scheduled retries.
+- `backend/app/services/sf2.py` — validates the official template, generates all-school or adviser-section logs, fills attendance and transferee remarks, separates male/female blocks, alphabetizes names, and writes tardy marks.
+- `backend/app/services/roster.py` — validates approved XLSX rosters including enrollment/transfer fields, normalizes records, imports people, hashes the source file, and records import audits.
+- `backend/app/services/backup.py` — snapshots SQLite or transactionally dumps MySQL, packages matching secrets/artifacts, encrypts and hashes the package, records inventory/model/key metadata, copies off-device, rotates scheduled copies, and verifies/stages two-phase restoration.
+- `backend/app/services/audit.py` — creates redacted before/after snapshots and unified attributable system-audit entries.
+- `backend/app/services/grading.py` — calculates raw-score percentages, weighted initial grades, transmuted results, incomplete states, and class statistics.
+- `backend/app/services/reports.py` — generates printable/XLSX attendance and grade summaries and registers immutable report metadata/hashes.
+- `backend/app/services/retention.py` — previews approved retention eligibility, applies legal holds, performs bounded operational cleanup, and issues disposal certificates.
 - `backend/app/services/disposal.py` — performs authorized linked-record deletion while preserving a non-identifying disposal audit.
-- `backend/app/services/scheduler.py` — runs automatic attendance closing and queued SMS dispatch in a managed background thread.
+- `backend/app/services/scheduler.py` — runs schedule-specific attendance closing, SMS dispatch/reconciliation, and due encrypted backups in a managed background thread.
 - `backend/app/services/settings_store.py` — stores JSON configuration and Fernet-encrypted secrets in the system-settings table.
 
 ## Tests, scripts, and project records
 
-- `backend/tests/test_smoke.py` — isolated integration tests covering biometric lifecycle, multi-face recognition, repeated attendance events, exceptions, grades, roster/SF2 behavior, disposal, and backup/restore.
+- `backend/tests/test_smoke.py` — isolated integration tests covering biometrics, multi-face recognition, re-entry, reporting scope, transfers, clean-slate reset, legacy migration repair, the capcom6 Android gateway request contract and reachability check, grades, roster/SF2, disposal, and backup/restore.
+- `backend/tools/migrate_sqlite_to_mysql.py` — copies an upgraded SQLite data set into an empty MySQL schema and verifies every application-table row count before cutover.
+- `backend/tools/apply_mysql_restore.py` — applies a verified staged MySQL dump while the API is offline, after first creating an encrypted safety backup, then swaps matching local secrets/artifacts.
 - `scripts/setup.ps1` — creates the Python environment, installs backend/frontend dependencies, prepares `.env`, and optionally installs the approved SF2 template.
-- `scripts/start.ps1` — launches the local FastAPI and Vite services in hidden processes and writes their output to `logs/`.
+- `scripts/update.ps1` — refuses a dirty source tree, fast-forwards from `origin/main`, and reruns the idempotent dependency setup.
+- `scripts/start.ps1` — preflights the required ports, launches FastAPI and Vite in hidden processes, waits for both HTTP endpoints to become ready, cleans up failed startup processes, and writes output to `logs/`.
+- `scripts/migrate-sqlite-to-mysql.ps1` — securely prompts for the restricted MySQL connection URL and runs the verified copy utility.
+- `scripts/configure-eduscan-mysql.ps1` — securely provisions the restricted local MySQL account, creates an encrypted pre-migration backup, verifies the SQLite-to-MySQL copy, and updates the ignored backend environment file only after success.
+- `scripts/apply-mysql-restore.ps1` — prompts for recovery confirmation, a fresh safety-backup passphrase, and MySQL administrator credentials before invoking the controlled offline restore.
 - `scripts/test-disaster-recovery.ps1` — runs the isolated disaster-recovery verification procedure.
 - `docs/DISASTER_RECOVERY.md` — operational backup, restore, validation, and incident-recovery runbook.
+- `docs/INSTALLATION.md` — clean clone, dependency installation, MySQL selection, updates, offline preparation, and troubleshooting.
+- `docs/MYSQL_MIGRATION.md` — MySQL account creation, verified copy, cutover, rollback, and post-migration backup procedure.
+- `docs/ANDROID_SMS_GATEWAY.md` — physical Android Local Server setup, offline-network operation, connection tests, and troubleshooting.
 - `docs/RAD_PROGRESS_REPORT.txt` — chronological capstone progress organized by RAD methodology phases.
 - `docs/PROJECT_STRUCTURE.md` — this architecture and file-purpose guide.
 
@@ -149,6 +165,7 @@ The following paths are created locally and should not be published:
 - `backend/.venv/` — installed Python environment.
 - `backend/data/eduscan.db` and its WAL/SHM files — live SQLite records.
 - `backend/data/.encryption_key` — key required to decrypt biometric samples and models.
+- `backend/data/.app_secret` — generated per-installation token-signing secret when an environment secret is not supplied.
 - `backend/data/biometrics/` — encrypted face samples.
 - `backend/data/models/` — encrypted LBPH model versions.
 - `backend/data/exports/` — generated temporary logs and SF2 workbooks.

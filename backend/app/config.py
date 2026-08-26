@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 import os
+import secrets
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -20,12 +22,23 @@ def _apply_pending_restore() -> None:
     marker = pending / "ready.json"
     if not marker.exists():
         return
+    try:
+        restore_state = json.loads(marker.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return
+    if restore_state.get("manifest", {}).get("database_backend") == "mysql":
+        # A MySQL restore must be performed while the API is stopped by the
+        # controlled restore tool. Importing SQL during module import could
+        # leave a partially restored live database.
+        return
     stamp = __import__("datetime").datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
     recovery = DATA_DIR / f"pre_restore_{stamp}"
     recovery.mkdir(parents=True, exist_ok=True)
-    for name in ("eduscan.db", ".encryption_key", "biometrics", "models", "templates"):
+    for name in ("eduscan.db", ".encryption_key", ".app_secret", "biometrics", "models", "templates"):
         current = DATA_DIR / name
         restored = pending / name
+        if name == ".app_secret" and not restored.exists():
+            continue
         if current.exists():
             current.replace(recovery / name)
         if restored.exists():
@@ -62,6 +75,21 @@ def _encryption_key() -> bytes:
     return key
 
 
+def _application_secret() -> str:
+    supplied = os.getenv("EDUSCAN_SECRET_KEY", "").strip()
+    if supplied and supplied != "eduscan-development-secret-change-before-production":
+        return supplied
+    secret_path = DATA_DIR / ".app_secret"
+    if secret_path.exists():
+        existing = secret_path.read_text(encoding="utf-8").strip()
+        if len(existing) >= 48:
+            return existing
+    generated = secrets.token_urlsafe(64)
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    secret_path.write_text(generated, encoding="utf-8")
+    return generated
+
+
 _load_dotenv()
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 _apply_pending_restore()
@@ -72,7 +100,7 @@ for directory in (DATA_DIR, BIOMETRIC_DIR, MODEL_DIR, TEMPLATE_DIR, EXPORT_DIR):
 @dataclass(frozen=True)
 class Settings:
     database_url: str = os.getenv("DATABASE_URL", "sqlite:///./data/eduscan.db")
-    secret_key: str = os.getenv("EDUSCAN_SECRET_KEY", "eduscan-development-secret-change-before-production")
+    secret_key: str = _application_secret()
     encryption_key: bytes = _encryption_key()
     lbph_threshold: float = float(os.getenv("LBPH_THRESHOLD", "65"))
     min_samples: int = int(os.getenv("BIOMETRIC_MIN_SAMPLES", "15"))

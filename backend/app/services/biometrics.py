@@ -6,7 +6,7 @@ import os
 import threading
 import uuid
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import cv2
@@ -17,7 +17,8 @@ from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 from ..config import BIOMETRIC_DIR, MODEL_DIR, settings
-from ..models import BiometricAuditEvent, BiometricModel, BiometricSample, Person, User
+from ..models import BiometricAuditEvent, BiometricModel, BiometricSample, Person, RecognitionReview, User
+from .settings_store import get_json
 
 
 FACE_SIZE = (200, 200)
@@ -32,17 +33,21 @@ class ProcessedFace:
     encoded: bytes
     quality: float
     box: tuple[int, int, int, int] | None = None
+    eye_count: int = 0
+    face_signature: str = ""
 
 
 class BiometricService:
     def __init__(self) -> None:
         self.fernet = Fernet(settings.encryption_key)
         self.detector = cv2.CascadeClassifier(str(Path(cv2.data.haarcascades) / "haarcascade_frontalface_default.xml"))
+        self.eye_detector = cv2.CascadeClassifier(str(Path(cv2.data.haarcascades) / "haarcascade_eye_tree_eyeglasses.xml"))
         if self.detector.empty():
             raise RuntimeError("OpenCV Haar cascade could not be loaded")
         self._recognizer = None
         self._model_path = None
         self._lock = threading.RLock()
+        self._liveness: dict[int, dict] = {}
 
     def _decode(self, data: bytes) -> np.ndarray:
         array = np.frombuffer(data, dtype=np.uint8)
@@ -69,7 +74,13 @@ class BiometricService:
         ok, encoded = cv2.imencode(".png", face)
         if not ok:
             raise HTTPException(status_code=500, detail="Face crop could not be encoded")
-        return ProcessedFace(face, encoded.tobytes(), round(max(0.0, min(100.0, quality)), 2), tuple(map(int, box)))
+        upper_face = face[:115, :]
+        eyes = self.eye_detector.detectMultiScale(upper_face, scaleFactor=1.12, minNeighbors=5, minSize=(18, 18))
+        tiny = cv2.resize(face, (16, 16), interpolation=cv2.INTER_AREA)
+        signature_bits = (tiny > tiny.mean()).astype(np.uint8).tobytes()
+        signature = hashlib.sha256(signature_bits).hexdigest()
+        return ProcessedFace(face, encoded.tobytes(), round(max(0.0, min(100.0, quality)), 2),
+                             tuple(map(int, box)), min(len(eyes), 2), signature)
 
     def process_faces(self, data: bytes, strict: bool = True) -> list[ProcessedFace]:
         image = self._decode(data)
@@ -334,6 +345,80 @@ class BiometricService:
                 self._model_path = active.file_path
             return self._recognizer, active
 
+    @staticmethod
+    def runtime_config(db: Session) -> dict:
+        value = get_json(db, "biometric.runtime", {})
+        return {
+            "threshold": float(value.get("threshold", settings.lbph_threshold)),
+            "liveness_enabled": bool(value.get("liveness_enabled", True)),
+            "liveness_window_seconds": int(value.get("liveness_window_seconds", 8)),
+            "review_failure_threshold": int(value.get("review_failure_threshold", 4)),
+        }
+
+    def verify_liveness(self, db: Session, person: Person, processed: ProcessedFace) -> tuple[bool, str]:
+        config = self.runtime_config(db)
+        if not config["liveness_enabled"]:
+            return True, "Liveness verification is disabled by an authorized administrator"
+        now = datetime.utcnow()
+        state = self._liveness.get(person.id)
+        if not state or state["expires_at"] < now:
+            state = {"stage": "open" if processed.eye_count else "closed",
+                     "expires_at": now + timedelta(seconds=config["liveness_window_seconds"])}
+            self._liveness[person.id] = state
+            return False, "Liveness check: blink once or gently turn your head, then face the camera again"
+        if state["stage"] == "open" and processed.eye_count == 0:
+            state["stage"] = "closed"
+            return False, "Blink detected; open your eyes and face the camera to complete verification"
+        if state["stage"] == "closed" and processed.eye_count > 0:
+            self._liveness.pop(person.id, None)
+            signature = hashlib.sha256(f"person:{person.id}".encode()).hexdigest()
+            pending = db.scalar(select(RecognitionReview).where(
+                RecognitionReview.face_signature == signature,
+                RecognitionReview.review_type == "Liveness",
+                RecognitionReview.status.in_(["Open", "Observing"]),
+            ).order_by(RecognitionReview.last_seen_at.desc()))
+            if pending:
+                pending.status = "Resolved"
+                pending.resolution_note = "Liveness challenge completed at the gate station"
+                pending.resolved_by_name = "EduScan liveness verifier"
+                pending.resolved_at = now
+                db.commit()
+            return True, "Natural blink sequence verified"
+        return False, "Liveness check is waiting for a blink; keep your face visible"
+
+    @staticmethod
+    def record_review(db: Session, processed: ProcessedFace, review_type: str, reason: str,
+                      person: Person | None, distance: float) -> RecognitionReview:
+        now = datetime.utcnow()
+        signature = hashlib.sha256(f"person:{person.id}".encode()).hexdigest() if person else processed.face_signature
+        item = db.scalar(select(RecognitionReview).where(
+            RecognitionReview.face_signature == signature,
+            RecognitionReview.review_type == review_type,
+            RecognitionReview.status.in_(["Open", "Observing"]),
+            RecognitionReview.last_seen_at >= now - timedelta(minutes=2),
+        ).order_by(RecognitionReview.last_seen_at.desc()))
+        if item:
+            item.occurrence_count += 1
+            item.last_seen_at = now
+            item.distance = distance
+            item.quality_score = processed.quality
+            item.reason = reason
+            if review_type == "Liveness" and item.occurrence_count >= BiometricService.runtime_config(db)["review_failure_threshold"]:
+                item.status = "Open"
+        else:
+            initial_status = "Observing" if review_type == "Liveness" and BiometricService.runtime_config(db)["review_failure_threshold"] > 1 else "Open"
+            item = RecognitionReview(
+                id=str(uuid.uuid4()), face_signature=signature,
+                candidate_person_id=person.id if person else None,
+                candidate_name=person.full_name if person else None,
+                review_type=review_type, reason=reason, distance=distance,
+                quality_score=processed.quality, occurrence_count=1, status=initial_status,
+            )
+            db.add(item)
+        db.commit()
+        db.refresh(item)
+        return item
+
     def recognize(self, db: Session, frame: bytes) -> tuple[Person | None, float, float]:
         if not settings.biometric_enabled:
             raise HTTPException(status_code=503, detail="Biometric processing is disabled by server configuration")
@@ -347,22 +432,35 @@ class BiometricService:
             return None, float(distance), processed.quality
         return person, float(distance), processed.quality
 
-    def recognize_many(self, db: Session, frame: bytes) -> list[tuple[Person | None, float, float, tuple[int, int, int, int] | None]]:
+    def recognize_many(self, db: Session, frame: bytes) -> list[dict]:
         if not settings.biometric_enabled:
             raise HTTPException(status_code=503, detail="Biometric processing is disabled by server configuration")
         processed_faces = self.process_faces(frame, strict=True)
         recognizer, model = self._active_recognizer(db)
-        results = []
+        results: list[dict] = []
+        config = self.runtime_config(db)
         seen_people: set[int] = set()
         for processed in processed_faces:
             label, distance = recognizer.predict(processed.image)
             person = None
-            if label != -1 and float(distance) <= model.threshold and int(label) not in seen_people:
+            if label != -1 and float(distance) <= config["threshold"] and int(label) not in seen_people:
                 candidate = db.get(Person, int(label))
                 if candidate and candidate.active and candidate.biometric_consent:
                     person = candidate
                     seen_people.add(candidate.id)
-            results.append((person, float(distance), processed.quality, processed.box))
+            live = False
+            message = "Face was not recognized with sufficient confidence"
+            review = None
+            if person:
+                live, message = self.verify_liveness(db, person, processed)
+                if not live:
+                    review = self.record_review(db, processed, "Liveness", message, person, float(distance))
+            else:
+                review = self.record_review(db, processed, "Unknown Face", message, None, float(distance))
+            results.append({"person": person, "distance": float(distance), "quality": processed.quality,
+                            "box": processed.box, "face_signature": processed.face_signature,
+                            "eye_count": processed.eye_count, "liveness_verified": live,
+                            "message": message, "review_id": review.id if review else None})
         return results
 
 

@@ -36,6 +36,10 @@ class EduScanSmokeTest(unittest.TestCase):
         response = cls.client.post("/api/auth/login", json={"username": "admin", "password": "admin123"})
         assert response.status_code == 200, response.text
         cls.headers = {"Authorization": f"Bearer {response.json()['access_token']}"}
+        changed = cls.client.post("/api/auth/change-password", headers=cls.headers, json={
+            "current_password": "admin123", "new_password": "Smoke-Admin-Password-2026!",
+        })
+        assert changed.status_code == 200, changed.text
 
     @classmethod
     def tearDownClass(cls) -> None:
@@ -161,7 +165,9 @@ class EduScanSmokeTest(unittest.TestCase):
 
         class_key = "10-rizal-mathematics"
         gradebook = self.client.put(f"/api/gradebook/{class_key}", headers=self.headers, json={
-            "class_key": class_key, "passing_grade": 75,
+            "class_key": class_key, "school_year": "2026-2027", "quarter": 1,
+            "subject": "Mathematics", "grade": "10", "section": "Rizal",
+            "change_reason": "Initial verified grading setup", "passing_grade": 75,
             "components": [
                 {"id": "quiz-1", "category": "Quizzes", "label": "Quiz 1", "weight": 30, "max_score": 100},
                 {"id": "summative-1", "category": "Summative Tests", "label": "Summative 1", "weight": 50, "max_score": 100},
@@ -217,6 +223,93 @@ class EduScanSmokeTest(unittest.TestCase):
         self.assertEqual(template.status_code, 200, template.text)
         self.assertTrue(template.json()["configured"])
 
+    def test_legacy_database_migration_repairs_partial_attendance_schema(self) -> None:
+        from sqlalchemy import create_engine, inspect, text
+        from app.migrations import run_migrations
+
+        legacy_path = Path(TEST_DIR.name) / "legacy-upgrade.db"
+        legacy_engine = create_engine(f"sqlite:///{legacy_path.as_posix()}")
+        with legacy_engine.begin() as connection:
+            connection.execute(text(
+                "CREATE TABLE schema_migrations (version VARCHAR(80) PRIMARY KEY, "
+                "description VARCHAR(255) NOT NULL, applied_at DATETIME NOT NULL)"
+            ))
+            connection.execute(text(
+                "INSERT INTO schema_migrations VALUES "
+                "('0001_initial_versioned_schema', 'Legacy schema', '2026-08-17 00:00:00')"
+            ))
+            connection.execute(text(
+                "CREATE TABLE persons (id INTEGER PRIMARY KEY, external_id VARCHAR(80), full_name VARCHAR(180), "
+                "sex VARCHAR(20), role VARCHAR(40), biometric_consent BOOLEAN, active BOOLEAN, created_at DATETIME)"
+            ))
+        applied = run_migrations(legacy_engine)
+        self.assertEqual(applied, [
+            "0002_attendance_reporting_controls",
+            "0003_attendance_reporting_schema_repair",
+            "0004_section_adviser_account_link",
+            "0005_station_security_sms_controls",
+            "0006_remove_station_direction_mode",
+            "0007_personnel_attendance_schedules",
+            "0008_completion_workflows",
+        ])
+        inspector = inspect(legacy_engine)
+        self.assertTrue(inspector.has_table("attendance_reset_audits"))
+        columns = {item["name"] for item in inspector.get_columns("persons")}
+        self.assertTrue({"enrollment_status", "enrollment_start_date", "enrollment_end_date", "transfer_school"} <= columns)
+        legacy_engine.dispose()
+
+    def test_sms_gateway_reachability_check_does_not_send(self) -> None:
+        with patch("app.services.sms.socket.create_connection") as connection:
+            connection.return_value.__enter__.return_value = object()
+            checked = self.client.get("/api/sms/gateway/check", headers=self.headers)
+        self.assertEqual(checked.status_code, 200, checked.text)
+        self.assertTrue(checked.json()["reachable"])
+        self.assertFalse(checked.json()["enabled"])
+        connection.assert_called_once()
+
+    def test_capcom6_android_gateway_contract(self) -> None:
+        from app.database import SessionLocal
+        from app.models import SmsOutbox
+        from app.services.sms import send_record
+
+        with SessionLocal() as db:
+            record = SmsOutbox(
+                id=str(uuid.uuid4()), person_id=None, event_type="test",
+                recipient="+639171234567", message="EduScan capcom6 contract test.", status="queued",
+            )
+            db.add(record)
+            db.commit()
+            db.refresh(record)
+            gateway = {
+                "enabled": True,
+                "gateway_url": "http://192.168.1.100:8080",
+                "username": "eduscan-gateway",
+                "password": "test-only-password",
+                "school_contact": "the school office",
+                "templates": {},
+            }
+            with patch("app.services.sms.sms_config", return_value=gateway), \
+                    patch("app.services.sms.socket.getaddrinfo", return_value=[
+                        (2, 1, 6, "", ("192.168.1.100", 8080)),
+                    ]), patch("app.services.sms.httpx.post") as post:
+                post.return_value.content = b'{"id":"capcom6-message-001"}'
+                post.return_value.json.return_value = {"id": "capcom6-message-001"}
+                post.return_value.raise_for_status.return_value = None
+                sent = send_record(db, record)
+
+            post.assert_called_once_with(
+                "http://192.168.1.100:8080/message",
+                auth=("eduscan-gateway", "test-only-password"),
+                json={
+                    "textMessage": {"text": "EduScan capcom6 contract test."},
+                    "phoneNumbers": ["+639171234567"],
+                    "withDeliveryReport": True,
+                },
+                timeout=12,
+            )
+            self.assertEqual(sent.status, "accepted")
+            self.assertEqual(sent.gateway_message_id, "capcom6-message-001")
+
     def test_extended_attendance_administration_and_disposal(self) -> None:
         from app.database import SessionLocal
         from app.models import AttendanceCorrection, AttendanceEvent, ExcusedAbsence, GradeScore, Person
@@ -263,7 +356,8 @@ class EduScanSmokeTest(unittest.TestCase):
         self.assertEqual(correction.status_code, 200, correction.text)
         gradebook = self.client.put("/api/gradebook/disposal-gradebook", headers=self.headers, json={
             "class_key": "disposal-gradebook", "school_year": "2026-2027", "quarter": 1,
-            "subject": "Mathematics", "change_reason": "Initial authorized score entry",
+            "subject": "Mathematics", "grade": "10", "section": "Rizal",
+            "change_reason": "Initial authorized score entry",
             "passing_grade": 75, "components": [{"id": "q1", "category": "Quizzes", "label": "Quiz 1", "weight": 100, "max_score": 10}],
             "scores": {str(person_id): {"q1": 9}},
         })
@@ -357,6 +451,119 @@ class EduScanSmokeTest(unittest.TestCase):
             self.client.request("DELETE", f"/api/admin/persons/{item['id']}/records", headers=self.headers,
                                 json={"reason": "Test cleanup after roster verification",
                                       "authorization_reference": "TEST-CLEANUP-002", "confirmation": external_id})
+
+    def test_reporting_scope_transfer_deduplication_and_clean_slate(self) -> None:
+        from openpyxl import load_workbook
+        from app.database import SessionLocal
+        from app.models import Person
+        from app.services.attendance import MANILA, record_gate_match
+        from app.services.settings_store import set_json
+
+        account = self.client.post("/api/admin/users", headers=self.headers, json={
+            "username": "adviser.scope", "password": "Scoped-Teacher-2026!", "role": "teacher",
+            "full_name": "Adviser Scope Test", "active": True,
+        })
+        self.assertEqual(account.status_code, 200, account.text)
+        grade = self.client.post("/api/admin/grade-levels", headers=self.headers, json={
+            "id": None, "name": "11-T", "sequence": 11, "active": True,
+        })
+        self.assertEqual(grade.status_code, 200, grade.text)
+        section = self.client.post("/api/admin/sections", headers=self.headers, json={
+            "id": None, "grade_level_id": grade.json()["id"], "name": "Advisory",
+            "adviser_user_id": account.json()["id"], "adviser_name": "Adviser Scope Test", "active": True,
+        })
+        self.assertEqual(section.status_code, 200, section.text)
+
+        students = []
+        payloads = [
+            {"external_id": "SCOPE-002", "lrn": "777777777772", "full_name": "BETA, LEARNER",
+             "sex": "Male", "enrollment_status": "Regular"},
+            {"external_id": "SCOPE-001", "lrn": "777777777771", "full_name": "ALPHA, LEARNER",
+             "sex": "Male", "enrollment_status": "Regular"},
+            {"external_id": "SCOPE-003", "lrn": "777777777773", "full_name": "CRUZ, TRANSFEREE",
+             "sex": "Female", "enrollment_status": "Transferred In", "enrollment_start_date": "2026-08-10",
+             "transfer_school": "Previous National High School"},
+        ]
+        for payload in payloads:
+            response = self.client.post("/api/persons", headers=self.headers, json={
+                **payload, "role": "Student", "grade": "11-T", "section": "Advisory",
+                "guardian_phone": None, "biometric_consent": False,
+            })
+            self.assertEqual(response.status_code, 200, response.text)
+            students.append(response.json())
+
+        duplicate_id = self.client.post("/api/persons", headers=self.headers, json={
+            **payloads[0], "full_name": "DUPLICATE, SHOULD FAIL", "role": "Student",
+            "grade": "11-T", "section": "Advisory", "guardian_phone": None, "biometric_consent": False,
+        })
+        self.assertEqual(duplicate_id.status_code, 409, duplicate_id.text)
+
+        all_school = self.client.get("/api/attendance/temporary-log?date=2026-08-24", headers=self.headers)
+        self.assertEqual(all_school.status_code, 200, all_school.text)
+        all_book = load_workbook(io.BytesIO(all_school.content), read_only=True, data_only=True)
+        all_rows = list(all_book["All-School Attendance"].iter_rows(min_row=2, values_only=True))
+        all_book.close()
+        scope_rows = [row for row in all_rows if row[6:8] == ("11-T", "Advisory")]
+        self.assertEqual([row[3] for row in scope_rows], ["ALPHA, LEARNER", "BETA, LEARNER", "CRUZ, TRANSFEREE"])
+        self.assertEqual(len({row[1] for row in scope_rows}), 3)
+
+        teacher_login = self.client.post("/api/auth/login", json={
+            "username": "adviser.scope", "password": "Scoped-Teacher-2026!",
+        })
+        self.assertEqual(teacher_login.status_code, 200, teacher_login.text)
+        teacher_headers = {"Authorization": f"Bearer {teacher_login.json()['access_token']}"}
+        teacher_password = self.client.post("/api/auth/change-password", headers=teacher_headers, json={
+            "current_password": "Scoped-Teacher-2026!", "new_password": "Scoped-Teacher-Updated-2026!",
+        })
+        self.assertEqual(teacher_password.status_code, 200, teacher_password.text)
+        assigned = self.client.get("/api/my/advisory-sections", headers=teacher_headers)
+        self.assertEqual([(item["grade"], item["section"]) for item in assigned.json()], [("11-T", "Advisory")])
+        scoped = self.client.get(
+            "/api/attendance/temporary-log?date=2026-08-24&grade=11-T&section=Advisory",
+            headers=teacher_headers,
+        )
+        self.assertEqual(scoped.status_code, 200, scoped.text)
+        self.assertEqual(self.client.get("/api/attendance/temporary-log?date=2026-08-24", headers=teacher_headers).status_code, 422)
+        self.assertEqual(self.client.get(
+            "/api/attendance/temporary-log?date=2026-08-24&grade=10&section=Rizal",
+            headers=teacher_headers,
+        ).status_code, 403)
+
+        with SessionLocal() as db:
+            set_json(db, "attendance", {"absence_cutoff": "09:00", "duplicate_cooldown_seconds": 0,
+                                        "auto_close_enabled": True})
+            learner = db.get(Person, students[0]["id"])
+            first = record_gate_match(db, learner, 20.0, datetime(2026, 8, 24, 7, 15, tzinfo=MANILA))
+            self.assertEqual(first["direction"], "Time In")
+        reset = self.client.post("/api/attendance/reset", headers=self.headers, json={
+            "attendance_date": "2026-08-24", "reason": "Administrator cleared the erroneous demonstration log",
+            "confirmation": "2026-08-24",
+        })
+        self.assertEqual(reset.status_code, 200, reset.text)
+        self.assertGreaterEqual(reset.json()["superseded_event_count"], 1)
+        after_reset = self.client.get(
+            "/api/attendance?date=2026-08-24&grade=11-T&section=Advisory", headers=self.headers,
+        )
+        reset_row = next(row for row in after_reset.json() if row["person_id"] == students[0]["id"])
+        self.assertEqual(reset_row["status"], "No scan")
+        self.assertIn("Clean slate", reset_row["source"])
+        with SessionLocal() as db:
+            learner = db.get(Person, students[0]["id"])
+            restarted = record_gate_match(db, learner, 19.0, datetime(2026, 8, 24, 7, 20, tzinfo=MANILA))
+            self.assertEqual(restarted["direction"], "Time In")
+
+        sf2 = self.client.get(
+            "/api/sf2/export?year=2026&month=8&grade=11-T&section=Advisory&school_id=SJNHS&school_year=2026-2027",
+            headers=teacher_headers,
+        )
+        self.assertEqual(sf2.status_code, 200, sf2.text)
+        sf2_book = load_workbook(io.BytesIO(sf2.content), read_only=True, data_only=True)
+        sf2_sheet = sf2_book["School Form 2 (SF2)"]
+        self.assertEqual(sf2_sheet["B14"].value, "ALPHA, LEARNER")
+        self.assertEqual(sf2_sheet["B15"].value, "BETA, LEARNER")
+        self.assertEqual(sf2_sheet["B36"].value, "CRUZ, TRANSFEREE")
+        self.assertIn("TRANSFERRED IN", sf2_sheet["AE36"].value)
+        sf2_book.close()
 
     def test_z_secure_backup_and_restore_staging(self) -> None:
         passphrase = "Capstone-Recovery-2026!"

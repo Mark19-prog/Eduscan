@@ -5,7 +5,7 @@ Project Title:
 EduScan: A Web-Based Facial Recognition System for Automated Attendance and Grading Reports for San Jose National High School
 
 Reporting Period:
-2026-07-23 to 2026-08-17
+2026-07-23 to 2026-08-26
 
 Prepared For:
 Capstone project progress reporting and group presentation
@@ -23,7 +23,7 @@ This report documents the actual progress of EduScan according to the four prima
 - Rapid Construction
 - Cutover
 
-The report distinguishes implemented and tested functions from activities that still require real school deployment, stakeholder approval, hardware testing, or user evaluation. The dates are based on the available Git commit, project files, implementation records, and completed verification work. The original repository contains only one initial batch commit; therefore, later accomplishments are grouped by the dates on which the working system files and verification results were completed.
+The report distinguishes implemented functions from activities that still require formal testing, real school deployment, stakeholder approval, hardware evaluation, or user evaluation. The dates are based on the available Git commit, project files, implementation records, and completed development checks. The original repository contains only one initial batch commit; therefore, later accomplishments are grouped by the dates on which the working system files and recorded checks were completed.
 
 
 2. PROJECT OBJECTIVES COVERED BY THE RAD PROCESS
@@ -66,6 +66,7 @@ Requirements Established:
 - The first arrival may be classified as late using the teacher-defined class schedule and grace period.
 - Teachers and administrators may correct attendance records, but the original gate event must remain available for audit.
 - Daily absence closing must run automatically at the authorized cutoff.
+- Faculty and non-teaching personnel must be evaluated only against an applicable administrator-defined duty schedule; unscheduled personnel must not be automatically marked absent.
 - Weekends, holidays, suspended classes, special schedules, and excused absences must not be handled as ordinary school days.
 - SMS events must cover time-in, time-out, tardiness, and absence.
 - The intended SMS gateway is a school-controlled Android phone operating on the secured local network.
@@ -280,10 +281,24 @@ Construction Iteration 6: Reliability, Backup, and Database Control
 - [2026-08-17]: The previous live data set was preserved in a timestamped recovery folder when a staged restoration was applied.
 - [2026-08-17]: A disaster-recovery procedure and isolated recovery verification script were completed.
 
+Construction Iteration 7: Adviser Reporting and Cutover Preparation
+
+- [2026-08-22]: The all-school temporary log was changed to include every active school record and organize records by role, grade level, section, and name.
+- [2026-08-22]: Adviser temporary logs and SF2 exports were restricted to sections assigned to the signed-in teacher account.
+- [2026-08-22]: Section adviser authorization was linked to the teacher account ID instead of relying only on a matching display name.
+- [2026-08-22]: Student ID and LRN uniqueness checks and same-name duplicate warnings were added without automatically merging different identities.
+- [2026-08-22]: Temporary logs were changed to use separate ID and LRN columns and one row per unique identity key.
+- [2026-08-22]: Transferred-in and transferred-out status, effective dates, previous or receiving school, and SF2 remarks were implemented.
+- [2026-08-22]: Administrator clean-slate reset was implemented as an audited supersession of a selected day's events and corrections.
+- [2026-08-22]: Attendance, biometric, report, administration, and navigation actions were consolidated into primary actions and expandable management menus.
+- [2026-08-22]: A verified SQLite-to-MySQL copy utility, restricted-account setup procedure, cutover checklist, and rollback procedure were completed.
+- [2026-08-22]: Android Local Server URL validation and a non-sending connection diagnostic were implemented.
+- [2026-08-22]: The live SQLite schema was upgraded through migration 0004 after a browser-discovered partial-migration defect was repaired and adviser account links were added.
+
 Construction Verification Completed:
 
 - Backend application compilation passed.
-- Six backend integration tests passed.
+- Ten backend integration tests passed.
 - Frontend lint verification passed.
 - Frontend production build passed.
 - Live browser verification found no console errors.
@@ -407,10 +422,28 @@ Iteration 4: Expanded School Operations and Administration
 - Result: Re-entry handling, multi-face recognition, calendar exceptions, automatic closing, academic organization, grade audit, administration, roster import, separate full disposal, backup, disaster recovery, and migrations were completed.
 - Feedback incorporated: The project now distinguishes biometric-only deletion from complete school-record disposal and provides recovery controls required for practical use.
 
-Iteration 5: School Cutover and Evaluation
+Iteration 5: Adviser Reporting and Cutover Preparation
+
+- Date completed: 2026-08-22
+- Result: Adviser-scoped reporting, unique-ID safeguards, transferee handling, audited clean-slate reset, simplified navigation/actions, MySQL migration tooling, and Android gateway diagnostics were completed.
+- Feedback incorporated: Reporting now separates the school-wide gate log from adviser section output while preserving identity and reset auditability.
+
+Iteration 6: Operational Hardening and Personnel Attendance
+
+- Date completed: 2026-08-26
+- Result: Authentication received strong-password enforcement, first-use/reset replacement, lockout controls, and a unique per-installation signing secret. SMS received event idempotency, retry scheduling, and a configurable local rate limit. Encrypted backup and controlled restoration were extended to MySQL. Teacher grading and class schedule management were exposed in the teacher workspace and restricted to assigned sections with server-side academic, time-range, and score validation. Administrators can define faculty and non-teaching duty schedules so first arrivals use the correct grace period and automatic absence closing excludes unscheduled personnel. Gate movements continue to alternate automatically between time-in and time-out as required by the approved workflow.
+- Feedback incorporated: Development continued while formal testing, user acceptance, and ISO 25010 evaluation were explicitly deferred to a later phase.
+
+Iteration 7: Completion Workflows and Oversight
+
+- Date completed: 2026-08-27
+- Result: Raw-score gradebooks, finalization/reopening, grading summaries, date-range attendance/personnel reports, registered report review, schedule-specific closing, unified audit, restricted oversight roles, Android delivery reconciliation, liveness/review controls, approval-driven retention, legal holds, scheduled encrypted backups, and service-health controls were implemented.
+- Feedback incorporated: The interface groups advanced controls into Reports and Oversight workspaces, preserves automatic time-in/time-out alternation, and deliberately omits a scanner Entry/Exit mode, camera selector, active-camera name, and automatic OBS camera reconnection.
+
+Iteration 8: School Cutover and Evaluation
 
 - Status: Pending
-- Intended result: Approved school data, real devices, trained users, formal user acceptance, verified SF2 output, and completed ISO 25010 evaluation.
+- Intended result: Approved school data, trained users, isolated recovery drill, on-site device testing, formal user acceptance, verified SF2 output, and completed ISO 25010 evaluation.
 
 
 8. CHRONOLOGICAL ACCOMPLISHMENT LOG
@@ -443,6 +476,45 @@ Iteration 5: School Cutover and Evaluation
 - [2026-08-17]: Integrity-checked two-stage restoration and a tested disaster-recovery procedure were implemented.
 - [2026-08-17]: Versioned database migrations and SQLite reliability settings were implemented.
 - [2026-08-17]: Six backend integration tests, frontend lint, production build, recovery verification, live migration, and browser checks passed.
+- [2026-08-22]: All-school and adviser-section temporary attendance logs were implemented with section grouping, alphabetical ordering, and one row per unique ID or LRN.
+- [2026-08-22]: Adviser access was restricted to explicitly assigned sections for attendance, temporary logs, corrections, and SF2 generation.
+- [2026-08-22]: Transferee movement fields, roster import support, and official SF2 transfer remarks were implemented.
+- [2026-08-22]: An audited attendance clean-slate reset and correct post-reset time-in sequencing were implemented.
+- [2026-08-22]: Same-name duplicate warnings and unique ID/LRN rejection were implemented while retaining administrator-controlled record disposal.
+- [2026-08-22]: Administrator and teacher navigation and secondary row actions were simplified and grouped.
+- [2026-08-22]: SQLite-to-MySQL migration, verification, cutover, rollback, and restricted-account documentation were implemented.
+- [2026-08-22]: Android SMS Local Server validation, connection diagnostics, and offline setup documentation were implemented.
+- [2026-08-22]: The live database was backed up and upgraded through schema migration 0004 with foreign keys, WAL, and busy timeout verified.
+- [2026-08-22]: Nine backend integration tests, frontend lint, production build, migration repair verification, and browser checks passed.
+- [2026-08-25]: The capcom6 Android SMS Gateway request contract was locked by an automated test covering the Local Server endpoint, HTTP Basic credentials, JSON message body, and returned gateway message ID.
+- [2026-08-25]: Both duplicate Rajvir test identities and their linked attendance, SMS, and biometric audit records were fully disposed, leaving only non-identifying hashed disposal audits.
+- [2026-08-25]: Ten backend integration tests, frontend lint, production build, and source-diff validation passed.
+- [2026-08-26]: Strong-password rules, mandatory first-use/reset password replacement, five-failure temporary lockout, last-login status, and a generated per-installation token-signing secret were implemented.
+- [2026-08-26]: Attendance SMS outbox idempotency, scheduled retry timestamps, exponential retry delays, and a configurable 30-minute local sending limit were implemented.
+- [2026-08-26]: Transaction-consistent MySQL backup was added to encrypted recovery packages together with the matching application secret, encryption key, face samples, models, and templates.
+- [2026-08-26]: A controlled offline MySQL restore was implemented with integrity staging, a fresh encrypted safety backup, administrator-authorized SQL import, core-table verification, and matched local-artifact activation.
+- [2026-08-26]: The grading workspace was added to teacher navigation and restricted to the adviser’s assigned sections.
+- [2026-08-26]: Adviser-scoped class schedule creation, editing, meeting-day selection, late-grace configuration, and deletion were added to the teacher workspace.
+- [2026-08-26]: Administrator-defined faculty and non-teaching duty schedules were implemented with assignment-specific or role-default hours and late-grace rules.
+- [2026-08-26]: Automatic daily closing was extended to scheduled faculty and non-teaching personnel while explicitly excluding personnel without an applicable duty schedule.
+- [2026-08-26]: Gradebook saves gained active school-year, grading-period, grade-level, section, subject, roster-membership, component, weight, numeric, and maximum-score validation.
+- [2026-08-26]: Android SMS setup was updated to expose the local rate control and scheduled retry state without changing the approved message-template workflow.
+- [2026-08-26]: The teacher attendance view was corrected to retain “No scan” until authorized daily closing instead of presenting a premature absence, and its learner search was connected to name, LRN, and school ID filtering.
+- [2026-08-26]: MySQL/SQLite recovery instructions and project file documentation were updated; formal test execution remained deferred.
+- [2026-08-26]: The Windows startup script was hardened to wait for both API and web readiness and clean up incomplete startup processes.
+- [2026-08-27]: Raw-score grade entry with highest-possible scores and Scored, Missing, Excused, and Incomplete states was implemented.
+- [2026-08-27]: Gradebook finalization, locking, authorized reason-based reopening, class statistics, printable summaries, and XLSX grading exports were implemented.
+- [2026-08-27]: Date-range school, section, learner, faculty, and non-teaching attendance summaries were implemented in printable and XLSX formats.
+- [2026-08-27]: Class/personnel schedule-specific absence cutoffs and due-schedule automatic closing were implemented without Entry or Exit modes.
+- [2026-08-27]: Unified administrative audit, hashed generated-report history, and records-officer report review/approval were implemented.
+- [2026-08-27]: Restricted records-officer, privacy-officer, and ICT account roles and workspaces were implemented.
+- [2026-08-27]: Android SMS delivery reconciliation, accepted/delivered/failure states, authorized requeue/cancellation, and CSV delivery-log export were implemented.
+- [2026-08-27]: Gate API/database/camera/SMS/model health indicators and a controlled recognition-loop restart were implemented.
+- [2026-08-27]: Blink-based liveness gating and non-image unknown/liveness recognition review records were implemented with a documented attendance-correction fallback.
+- [2026-08-27]: Approved retention periods, preview, legal holds, bounded cleanup, and unique disposal certificates were implemented without automatically deleting official attendance or grade records.
+- [2026-08-27]: Daily/weekly encrypted backup scheduling, rotation, off-device copying, failure visibility, key fingerprint, model version, and integrity inventory were implemented.
+- [2026-08-27]: Clean-clone, locked dependency, MySQL, offline demonstration, safe update, and troubleshooting instructions were implemented.
+- [2026-08-27]: MySQL schema migration 0008, Python compilation, frontend lint, production build, live startup, endpoint registration, and browser-console sanity checks completed; formal testing remained deferred.
 
 
 9. CURRENT RAD PHASE SUMMARY
@@ -458,6 +530,6 @@ Iteration 5: School Cutover and Evaluation
 
 10. CONCLUSION
 
-EduScan has progressed beyond an interface prototype and now operates as a persistent local web application with real LBPH training and prediction, role-based accounts, attendance and correction records, repeated gate events, multiple-face processing, automated absence closing, Android SMS gateway integration, grading and grade audits, official SF2 generation, administrative data management, approved roster import, biometric and school-record disposal controls, encrypted backup and restoration, and versioned database migrations.
+EduScan has progressed beyond an interface prototype and now operates as a persistent local web application with real LBPH training and prediction, liveness review, hardened and restricted role-based accounts, automatically alternating time-in/time-out attendance, class and personnel duty schedules/cutoffs, school-wide and adviser-scoped records, audited correction/reset records, repeated gate events, multiple-face processing, schedule-aware automated absence closing, reconciled Android SMS delivery controls, raw-score/finalizable grading and grading reports, transferee-aware official SF2 generation, hashed report review, unified audit, administrative data management, approved roster import, legal-hold/retention controls, biometric and school-record disposal controls, scheduled encrypted SQLite/MySQL backup and controlled restoration, versioned database migrations, and a verified SQLite-to-MySQL migration path.
 
-Under the RAD methodology, Requirements Planning, User Design, and Rapid Construction have been completed for the current capstone scope. Cutover is actively in progress. The remaining work is primarily institutional approval, approved-data preparation, physical gate testing, real Android SMS validation, user training, formal user acceptance, ISO 25010 evaluation, and production hardening. These remaining activities must be completed and documented before the system can be declared fully deployed at San Jose National High School.
+Under the RAD methodology, Requirements Planning and User Design are complete for the current scope, while Rapid Construction has completed another operational-hardening iteration. Formal testing has been deferred by project direction and has not been claimed for the 2026-08-26 changes. Cutover and evaluation remain pending: institutional approval evidence, approved-data preparation, isolated recovery testing, physical gate evaluation, trained-user acceptance, SF2 validation, and ISO 25010 evaluation must be completed and documented before the system can be declared fully deployed at San Jose National High School.

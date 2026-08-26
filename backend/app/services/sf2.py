@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 
 from ..config import EXPORT_DIR, TEMPLATE_DIR, settings
 from ..models import Person
-from .attendance import is_instructional_day, raw_row
+from .attendance import active_people, is_instructional_day, raw_row
 
 
 DEFAULT_TEMPLATE = TEMPLATE_DIR / "School Form 2 (SF2) Daily Attendance Report of Learners.xlsx"
@@ -204,9 +204,11 @@ def generate_sf2(db: Session, year: int, month: int, grade: str, section: str,
     days = _school_days(db, year, month)
     if len(days) > len(DAY_COLUMNS):
         raise HTTPException(status_code=422, detail="This month has more than 25 weekdays; the official SF2 template cannot hold every day")
-    students = db.scalars(select(Person).where(
-        Person.active.is_(True), Person.role == "Student", Person.grade == grade, Person.section == section,
-    )).all()
+    first_day = date(year, month, 1)
+    last_day = date(year, month, calendar.monthrange(year, month)[1])
+    students = [person for person in active_people(db, grade, section, students_only=True)
+                if (not person.enrollment_start_date or person.enrollment_start_date <= last_day)
+                and (not person.enrollment_end_date or person.enrollment_end_date >= first_day)]
     males = sorted((person for person in students if person.sex == "Male"), key=lambda person: person.full_name.casefold())
     females = sorted((person for person in students if person.sex == "Female"), key=lambda person: person.full_name.casefold())
     if len(males) > len(MALE_ROWS) or len(females) > len(FEMALE_ROWS):
@@ -227,7 +229,7 @@ def generate_sf2(db: Session, year: int, month: int, grade: str, section: str,
     worksheet = ET.fromstring(members[worksheet_name])
 
     for row in MALE_ROWS + FEMALE_ROWS:
-        for column in range(2, 31):
+        for column in range(2, 32):
             _clear(_cell(worksheet, row, column))
     for column in DAY_COLUMNS:
         _clear(_cell(worksheet, 11, column))
@@ -247,6 +249,14 @@ def generate_sf2(db: Session, year: int, month: int, grade: str, section: str,
     for group, row_numbers in ((males, MALE_ROWS), (females, FEMALE_ROWS)):
         for person, row_number in zip(group, row_numbers):
             _set_text(_cell(worksheet, row_number, 2), person.full_name.upper())
+            if person.enrollment_status == "Transferred In":
+                detail = person.transfer_school or "previous school not recorded"
+                effective = person.enrollment_start_date.isoformat() if person.enrollment_start_date else "date not recorded"
+                _set_text(_cell(worksheet, row_number, 31), f"TRANSFERRED IN: {detail} ({effective})")
+            elif person.enrollment_status == "Transferred Out":
+                detail = person.transfer_school or "receiving school not recorded"
+                effective = person.enrollment_end_date.isoformat() if person.enrollment_end_date else "date not recorded"
+                _set_text(_cell(worksheet, row_number, 31), f"TRANSFERRED OUT: {detail} ({effective})")
             absent_count = 0
             late_count = 0
             for index, day in enumerate(days):
@@ -292,19 +302,37 @@ def generate_sf2(db: Session, year: int, month: int, grade: str, section: str,
     return output
 
 
-def generate_temporary_log(db: Session, day: date) -> Path:
+def generate_temporary_log(db: Session, day: date, grade: str | None = None,
+                           section: str | None = None) -> Path:
     workbook = Workbook()
     sheet = workbook.active
-    sheet.title = "Temporary Attendance Log"
-    sheet.append(["Date", "LRN / ID", "Name", "Sex", "Role", "Grade", "Section", "Time In", "Time Out", "Status", "Source"])
-    people = db.scalars(select(Person).where(Person.active.is_(True)).order_by(Person.full_name)).all()
+    sheet.title = "Section Attendance" if grade and section else "All-School Attendance"
+    sheet.append(["Date", "Student / Employee ID", "LRN", "Name", "Sex", "Role", "Grade", "Section",
+                  "Enrollment Status", "Enrollment Start", "Enrollment End", "Transfer School",
+                  "Time In", "Time Out", "Status", "Source"])
+    people = active_people(db, grade, section, students_only=bool(grade or section))
     for row in [raw_row(db, person, day) for person in people]:
-        sheet.append([day.isoformat(), row["lrn"] or row["external_id"], row["full_name"], row["sex"], row["role"],
-                      row["grade"], row["section"], str(row["time_in"] or ""), str(row["time_out"] or ""), row["status"], row["source"]])
+        sheet.append([day, row["external_id"], row["lrn"], row["full_name"], row["sex"], row["role"],
+                      row["grade"], row["section"], row["enrollment_status"], row["enrollment_start_date"],
+                      row["enrollment_end_date"], row["transfer_school"], row["time_in"], row["time_out"],
+                      row["status"], row["source"]])
     sheet.freeze_panes = "A2"
     sheet.auto_filter.ref = sheet.dimensions
     for cell in sheet[1]:
         cell.font = Font(bold=True)
-    output = EXPORT_DIR / f"temporary-attendance-{day.isoformat()}.xlsx"
+    widths = {"A": 13, "B": 22, "C": 18, "D": 30, "E": 10, "F": 24, "G": 10, "H": 18,
+              "I": 20, "J": 16, "K": 16, "L": 28, "M": 13, "N": 13, "O": 18, "P": 34}
+    for column, width in widths.items():
+        sheet.column_dimensions[column].width = width
+    for cell in sheet["A"][1:]:
+        cell.number_format = "yyyy-mm-dd"
+    for column in ("J", "K"):
+        for cell in sheet[column][1:]:
+            cell.number_format = "yyyy-mm-dd"
+    for column in ("M", "N"):
+        for cell in sheet[column][1:]:
+            cell.number_format = "hh:mm AM/PM"
+    suffix = f"-Grade-{grade}-{section}" if grade and section else "-All-School"
+    output = EXPORT_DIR / f"temporary-attendance-{day.isoformat()}{suffix}.xlsx"
     workbook.save(output)
     return output

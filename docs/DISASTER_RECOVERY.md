@@ -1,49 +1,79 @@
-# EduScan Disaster-Recovery Procedure
+# EduScan disaster-recovery procedure
 
 Owner: School system administrator / records officer
+
 Approval: School head and designated Data Protection Officer (DPO)
-Applies to: SQLite database, encryption key, encrypted face samples, LBPH models, and SF2 templates
+Applies to: configured SQLite or MySQL database, application secret, encryption key, encrypted face samples, LBPH models, and SF2 templates
 
 ## Recovery objectives
 
 - Target recovery point: the most recent verified daily backup.
 - Target recovery time for the gate station: 60 minutes after replacement hardware and the backup are available.
-- Store at least one current encrypted `.edubak` copy on separate school-controlled media. Do not keep the only copy on the gate laptop.
+- Keep at least one current encrypted `.edubak` copy on separate school-controlled media; the gate laptop must not hold the only copy.
 - Keep the backup passphrase in the approved school password vault, separated from the backup file.
+- Never restore a database without its matching `.encryption_key`, biometric/model files, and `.app_secret` when present.
 
-## Scheduled backup test
+## Creating an operational backup
 
 1. Sign in as an administrator and open Administration > Backup & recovery.
-2. Create a backup with a unique passphrase of at least 12 characters.
-3. Download the resulting `.edubak` file to approved encrypted removable storage or the approved secured repository.
-4. Record the filename, date, custodian, storage location, and authorization reference in the school backup register.
-5. Run `scripts\test-disaster-recovery.ps1`. This uses isolated temporary data and verifies encryption, manifest hashes, decryption, and restore staging without touching production data.
-6. Once per grading period, perform the full restoration drill below on a separate test computer.
+2. Enter a unique passphrase of at least 12 characters and create the backup.
+3. For SQLite, EduScan uses the SQLite online backup API. For MySQL, it uses a transaction-consistent `mysqldump` through the restricted application account.
+4. Download the `.edubak` file to approved encrypted removable storage or the approved secured repository.
+5. Record the filename, database backend, date, custodian, storage location, and authorization reference in the school backup register.
+6. Do not treat creation as proof of recoverability. The full restoration drill remains a later controlled testing activity and must be completed on isolated equipment before production acceptance.
 
-## Full restoration drill or incident recovery
+## Integrity verification and staging
 
-1. Stop EduScan on the recovery computer. Preserve the failed disk or current `backend\data` directory as evidence; do not overwrite it.
-2. Install the same EduScan release and dependencies on the recovery computer.
-3. Start EduScan once, sign in as an administrator, and open Administration > Backup & recovery.
-4. Select the approved `.edubak` file, enter its passphrase, type `STAGE RESTORE`, and submit.
-5. Confirm that the system reports successful integrity verification and requests a restart. A rejected hash, wrong passphrase, or malformed archive must stop the procedure.
-6. Stop and restart EduScan. At startup it moves the current database/key/artifacts to a timestamped `backend\data\pre_restore_*` folder, then applies the verified staged copy as one recovery set.
-7. Sign in and validate all of the following before returning the station to service:
-   - `/api/health` reports a working database.
-   - The expected students and employees appear under Administration.
-   - Face enrollment counts and the active LBPH model are present.
-   - Attendance, gradebook, grade audit, calendar, and SMS outbox records open correctly.
-   - A temporary attendance workbook and a sample SF2 workbook generate successfully.
-   - One authorized test face can be recognized and one Android gateway test SMS is delivered.
-8. Record the backup filename, restoration time, validation results, operator, and approving officer in the recovery log.
-9. Keep the `pre_restore_*` folder only until the approving officer accepts the restored system. Then dispose of it under the approved records schedule using secure deletion.
+1. Open Administration > Backup & recovery.
+2. Select an approved `.edubak`, enter its passphrase, type `STAGE RESTORE`, and submit.
+3. EduScan decrypts the package, rejects unsafe archive paths, verifies every SHA-256 manifest hash, checks that the backup database type matches the active deployment, and writes the verified files to `backend\data\pending_restore`.
+4. A wrong passphrase, damaged package, backend mismatch, unsafe path, or failed hash stops staging without modifying the active data.
+5. Do not stage another package while a verified restore is pending.
+
+## Applying a SQLite restore
+
+1. Stop and restart EduScan after successful staging.
+2. Before database initialization, EduScan moves the current SQLite database and local artifacts to a timestamped `backend\data\pre_restore_*` folder.
+3. EduScan then activates the staged database, encryption key, application secret when present, biometric samples, models, and templates as one recovery set.
+4. Complete the recovery validation checklist before reopening the scanner.
+
+## Applying a MySQL restore
+
+1. Stop EduScan and confirm that the API is no longer listening on port 8000.
+2. From the project directory, run:
+
+   ```powershell
+   .\scripts\apply-mysql-restore.ps1
+   ```
+
+3. Type `APPLY MYSQL RESTORE` exactly.
+4. Enter a new passphrase for the automatic pre-restore safety backup.
+5. Enter a MySQL administrator username and password. The restricted runtime account deliberately lacks routine table-drop authority.
+6. The tool creates an encrypted backup of the current MySQL database and local artifacts before importing anything.
+7. It imports the staged SQL while the API is offline. If MySQL rejects or interrupts the import, local encryption artifacts remain unchanged and the safety backup remains available.
+8. After a successful import, it verifies `schema_migrations` and `users`, preserves the previous local artifacts in a timestamped `pre_restore_*` folder, activates the matching staged artifacts, and removes the plaintext staged SQL.
+9. Start EduScan and complete the recovery validation checklist.
+
+## Recovery validation checklist
+
+- `/api/health` reports the expected database backend.
+- The expected administrator, teacher, and scanner accounts can sign in; restored tokens from another installation are not relied upon.
+- Expected students and employees appear under Administration.
+- Face enrollment counts and the active LBPH model are present.
+- Attendance, gradebooks, grade audit, calendar, and SMS outbox records open correctly.
+- A temporary attendance workbook and a sample SF2 workbook generate successfully.
+- On authorized test equipment, one consented test face is recognized and one test SMS is delivered.
+- The operator records backup filename, restore time, row/reference checks, operator, errors, and approving officer in the recovery log.
+
+The device checks, restoration timing, and user acceptance in this section are intentionally deferred until the project’s formal testing phase. They must not be reported as passed until actually performed and signed.
 
 ## Rollback if validation fails
 
 1. Stop EduScan immediately and do not collect new gate scans.
-2. Rename the failed restored `backend\data` set for investigation.
-3. Move the matching files from the latest `pre_restore_*` folder back to `backend\data`: `eduscan.db`, `.encryption_key`, `biometrics`, `models`, and `templates`.
-4. Restart and repeat the validation checklist.
-5. Document the failure and notify the administrator and DPO. Escalate suspected loss, alteration, or unauthorized access through the approved breach-response procedure.
+2. Preserve logs and the failed restored state for investigation.
+3. For MySQL, stage the automatic pre-restore `.edubak` and repeat the controlled offline MySQL procedure. For SQLite, restore the matching set from the latest `pre_restore_*` folder.
+4. Do not mix a database from one recovery set with keys, biometric files, or models from another.
+5. Repeat the validation checklist and document the failure and corrective action.
+6. Notify the administrator and DPO; use the approved breach-response procedure if loss, alteration, or unauthorized access is suspected.
 
-Never restore only `eduscan.db` without its matching `.encryption_key` and biometric/model files. A mismatched key makes encrypted samples and LBPH models unreadable.
+Keep `pre_restore_*` folders only until the approving officer accepts the recovery, then dispose of them under the approved records schedule and secure-deletion procedure.

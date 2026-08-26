@@ -7,6 +7,10 @@ $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $backendRoot = Join-Path $projectRoot "backend"
 $venvPython = Join-Path $backendRoot ".venv\Scripts\python.exe"
 
+if (-not (Get-Command npm.cmd -ErrorAction SilentlyContinue)) {
+  throw "Node.js/npm was not found. Install the Node.js LTS release, reopen PowerShell, and rerun setup."
+}
+
 if (-not (Test-Path -LiteralPath $venvPython)) {
   $pythonCommand = Get-Command py -ErrorAction SilentlyContinue
   if ($pythonCommand) {
@@ -33,5 +37,5 @@ if ($Sf2Template) {
 }
 
 Push-Location $projectRoot
-try { npm install } finally { Pop-Location }
+try { & npm.cmd ci } finally { Pop-Location }
 Write-Host "EduScan dependencies installed. Review backend\.env, then run scripts\start.ps1."

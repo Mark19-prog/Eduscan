@@ -15,6 +15,14 @@ export default function Grading() {
     setStructure(data);
     const activeYear = data.school_years.find((item) => item.active) || data.school_years[0];
     if (activeYear) setSchoolYear(activeYear.name);
+    const firstGrade = data.grade_levels.find((item) => item.active) || data.grade_levels[0];
+    if (firstGrade) {
+      setGrade(firstGrade.name);
+      const firstSection = data.sections.find((item) => item.active && item.grade_level_id === firstGrade.id);
+      if (firstSection) setSection(firstSection.name);
+    }
+    const firstSubject = data.subjects.find((item) => item.active) || data.subjects[0];
+    if (firstSubject) setSubject(firstSubject.name);
   }).catch((err) => setError(err.message)); }, []);
   useEffect(() => { api.get(`/persons?role=Student&grade=${encodeURIComponent(grade)}&section=${encodeURIComponent(section)}`).then((rows) => setStudents(rows.map((person) => ({ ...person, id: person.id, name: person.full_name })))).catch((err) => setError(err.message)); }, [grade, section]);
   const classKey = `${schoolYear}-q${quarter}-${grade}-${section}-${subject}`.toLowerCase().replace(/[^a-z0-9]+/g, '-');
@@ -26,5 +34,5 @@ export default function Grading() {
     <label><span className="field-label">Grade</span><select className="input-field" value={grade} onChange={(e) => setGrade(e.target.value)}>{structure.grade_levels.map((item) => <option key={item.id}>{item.name}</option>)}</select></label>
     <label><span className="field-label">Section</span><select className="input-field" value={section} onChange={(e) => setSection(e.target.value)}>{availableSections.map((item) => <option key={item.id}>{item.name}</option>)}</select></label>
     <label><span className="field-label">Subject</span><select className="input-field" value={subject} onChange={(e) => setSubject(e.target.value)}>{structure.subjects.map((item) => <option key={item.id}>{item.name}</option>)}</select></label>
-  </div></section><GradingModule key={classKey} students={students} classKey={classKey} schoolYear={schoolYear} quarter={quarter} subject={subject} /></div>;
+  </div></section><GradingModule key={classKey} students={students} classKey={classKey} schoolYear={schoolYear} quarter={quarter} subject={subject} grade={grade} section={section} /></div>;
 }

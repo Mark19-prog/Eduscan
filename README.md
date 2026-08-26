@@ -4,9 +4,12 @@ EduScan is the working local-first attendance, SMS, grading, and SF2 reporting s
 
 ## Documentation
 
+- [Installation and update guide](docs/INSTALLATION.md) — clean clone, dependencies, MySQL, offline demonstration, and safe updates
 - [Project structure and file guide](docs/PROJECT_STRUCTURE.md) — architecture, request flow, and the purpose of every maintained source file
 - [RAD progress report](docs/RAD_PROGRESS_REPORT.txt) — completed work organized around Rapid Application Development phases
 - [Disaster-recovery procedure](docs/DISASTER_RECOVERY.md) — encrypted backup, integrity verification, staged restoration, and recovery testing
+- [SQLite to MySQL migration](docs/MYSQL_MIGRATION.md) — non-destructive copy, row-count verification, cutover, and rollback
+- [Android SMS Gateway setup](docs/ANDROID_SMS_GATEWAY.md) — offline LAN setup, connection tests, and troubleshooting
 
 ## Implemented system
 
@@ -17,21 +20,31 @@ EduScan is the working local-first attendance, SMS, grading, and SF2 reporting s
 - Audited biometric CRUD; deletion purges encrypted samples, sample rows, obsolete LBPH files, and obsolete model rows while retaining only the required non-biometric audit record
 - Persistent SQLAlchemy database (SQLite by default; MySQL supported through `DATABASE_URL`)
 - Student, faculty, and non-teaching personnel attendance
-- Verified matches alternate between time-in and time-out throughout the day, supporting repeated exits and re-entries
+- Accepted matches alternate automatically between time-in and time-out after the duplicate-scan cooldown, supporting repeated exits and re-entries
+- Administrator-defined faculty and non-teaching duty schedules, late-grace classification, and schedule-aware automatic absence closing
 - Multi-face gate frames are detected and each distinct enrolled person is matched independently
 - Enlarged 16:9 gate camera workspace with a whole-frame multi-face guide and optional browser full-screen mode
 - Teacher-defined schedules and tardiness grace periods
 - Holidays, suspensions, weekends, excused absences, and authorized special schedules
 - Automatic daily absence closing, temporary XLSX generation, and SMS dispatch at the authorized cutoff
+- Per-section and per-personnel-schedule absence cutoffs so later or special schedules are not closed early
 - Immutable gate events plus attributable teacher/admin correction records
 - Real Android SMS Gateway local-server integration for time-in, time-out, tardiness, and absence notices
-- Encrypted gateway password storage and retryable SMS outbox
-- Teacher-configurable quizzes, summative tests, periodic tests, overall grade input, and DepEd transmutation display
+- Encrypted gateway password storage, event-idempotent outbox records, scheduled retries, and a configurable local sending limit
+- Android delivery reconciliation with queued/accepted/processed/sent/delivered/failed/exhausted/cancelled states, authorized requeue/cancellation, and CSV delivery export
+- Adviser-scoped, teacher-configurable quizzes, summative tests, periodic tests, overall grade input, server-validated scores, and DepEd transmutation display
+- Raw-score grading with highest-possible scores, missing/excused/incomplete states, finalization locks, authorized reason-based reopening, class statistics, printable summaries, and XLSX exports
 - School-year, grading-period, quarter, subject, grade-level, and section organization with grade-change audit history
+- Date-range student/personnel attendance exports, registered report hashes, and records-officer review/approval history
 - Administrative CRUD for accounts, students, employees, grade levels, sections, and subjects
+- Restricted records-officer, privacy-officer, and ICT roles plus a unified before/after administrative audit
 - Approved XLSX roster preview/import plus alphabetically arranged male/female SF2 placement
 - Separate full school-record disposal with an attributable, non-identifying disposal audit
-- Passphrase-encrypted backup/restoration of SQLite, its encryption key, biometric artifacts, models, and templates
+- Passphrase-encrypted backup/restoration of SQLite or MySQL together with the matching application secret, encryption key, biometric artifacts, models, and templates
+- Daily/weekly encrypted backup scheduling, rotation, off-device copies, run inventory, failure visibility, key fingerprint, model version, and file integrity hash
+- Approval-driven retention previews, legal holds, expired operational-record cleanup, and disposal certificates without deleting official attendance/grade records outside an approved schedule
+- Blink-based liveness gating, spoof-suspicion/unknown-face review records without retained review images, and a documented correction fallback
+- Gate-station API/database/camera/SMS/model health indicators and a controlled recognition-loop restart
 - Recorded database migrations and tested disaster-recovery procedure
 - Real temporary attendance XLSX and official SF2 XLSX generation using the supplied template and sex-specific row blocks
 - Privacy notice, access matrix, correction procedure, retention process, and deployment evidence register under System Setup
@@ -46,15 +59,17 @@ From PowerShell in the project directory:
 .\scripts\setup.ps1 -Sf2Template "C:\path\to\School Form 2 (SF2) Daily Attendance Report of Learners.xlsx"
 ```
 
+For a fresh clone and future `git pull` instructions, read [docs/INSTALLATION.md](docs/INSTALLATION.md). On a Windows policy that blocks local scripts, first run `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force`; this temporary setting ends with the PowerShell process.
+
 The setup creates `backend/.venv`, installs the backend and frontend dependencies, creates `backend/.env`, and optionally copies the official SF2 workbook.
 
-Review `backend/.env` before deployment. Change `EDUSCAN_SECRET_KEY`, keep the generated encryption key backed up securely, set allowed origins, and configure either SQLite or MySQL. Example MySQL URL:
+Review `backend/.env` before deployment, keep the generated encryption and application-secret files backed up securely, set allowed origins, and configure either SQLite or MySQL. If `EDUSCAN_SECRET_KEY` is not supplied, EduScan creates a unique ignored `backend/data/.app_secret` instead of using a shared development secret. Example MySQL URL:
 
 ```text
 DATABASE_URL=mysql+pymysql://eduscan:strong-password@127.0.0.1:3306/eduscan?charset=utf8mb4
 ```
 
-Create the MySQL database and restricted application account first. Versioned startup migrations record every applied schema revision in `schema_migrations`. SQLite creates `backend/data/eduscan.db` automatically and is suitable for one local capstone gate station.
+Create the MySQL database and restricted application account first. After completing MySQL Configurator, close EduScan and run `.\scripts\configure-eduscan-mysql.ps1` for a securely prompted, backed-up, row-count-verified cutover. Versioned startup migrations record every applied schema revision in `schema_migrations`. SQLite creates `backend/data/eduscan.db` automatically and is suitable for one local capstone gate station.
 
 ## Run
 
@@ -67,7 +82,7 @@ Create the MySQL database and restricted application account first. Versioned st
 - API documentation: `http://127.0.0.1:8000/docs`
 - Logs: `logs/`
 
-Initial local accounts (change before real deployment):
+Initial local accounts are bootstrap credentials only. On the first login after the security migration, EduScan requires each owner to replace the password with at least 12 characters containing uppercase, lowercase, a number, and a symbol:
 
 - Administrator: `admin` / `admin123`
 - Teacher: `teacher` / `teacher123`
@@ -76,23 +91,23 @@ Initial local accounts (change before real deployment):
 ## First-use sequence
 
 1. Log in as administrator.
-2. In System Setup, create each grade/section class schedule and set the late grace period.
+2. In System Setup, create each grade/section class schedule and each applicable faculty/non-teaching duty schedule, then set the late grace periods.
 3. In System Setup > Android SMS, enter the phone gateway URL/credentials, save, and send a test message.
 4. Open Gate Station > Enroll person. Enter the official identity/roster fields, confirm the documented authorization, capture 20 frames, and save/train.
 5. Enroll every authorized student/personnel member. The model is retrained after each enrollment.
-6. Log in with the scanner account on the secured gate laptop, enable the camera, and start recognition.
+6. Log in with the scanner account on the secured gate laptop, enable the camera, and start recognition. The accepted events alternate automatically between time-in and time-out.
 7. Review Attendance and make corrections with reasons. The server closes absences automatically at the authorized cutoff; administrators can run the same controlled action manually for operational recovery.
 8. Upload the official SF2 template in Reports if it was not supplied during setup, then generate and verify the monthly workbook.
-9. Open Administration to configure academic references, accounts, approved roster imports, and the encrypted backup schedule.
+9. Open Administration to configure academic references, accounts, and approved roster imports. Open Oversight for report/audit review, retention/legal holds, recognition reviews, and the encrypted backup schedule allowed by the signed-in role.
 
-## Verification
+## Build verification
 
 ```powershell
 npm run verify
-.\backend\.venv\Scripts\python.exe -m unittest discover -s backend\tests -v
+.\backend\.venv\Scripts\python.exe -m compileall -q backend\app
 ```
 
-The backend test creates an isolated temporary SQLite database and biometric file area. It verifies biometric CRUD and cleanup, real multi-person LBPH prediction, repeated entry/exit events, calendar exceptions, excused absences, grade audit, complete linked-record disposal, approved roster import, alphabetical SF2 placement, and encrypted backup/restore staging. Camera hardware and Android SMS delivery still require their real devices.
+Formal acceptance, device-volume, spoof-resistance, security, recovery-drill, and end-user evaluation phases are intentionally scheduled later. Camera hardware and actual Android SMS delivery require their real devices; a successful Local Server test message confirms the configured route but does not replace delivery monitoring.
 
 The tested recovery runbook is in `docs/DISASTER_RECOVERY.md`. Its isolated verification command is:
 

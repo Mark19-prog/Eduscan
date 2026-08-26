@@ -3,7 +3,6 @@ import { FileSpreadsheet } from 'lucide-react';
 import AdviserAnalyticsWidget from '../../components/Teacher/AdviserAnalyticsWidget';
 import SubjectSelector from '../../components/Teacher/SubjectSelector';
 import SectionAttendance from '../../components/Teacher/SectionAttendance';
-import GradingModule from '../../components/Teacher/GradingModule';
 import SF2ReportGenerator from '../../components/Teacher/SF2ReportGenerator';
 import StudentProfileModal from '../../components/Teacher/StudentProfileModal';
 import { api, localDate } from '../../api/client';
@@ -26,8 +25,8 @@ export default function SF2Dashboard() {
       name: person.full_name,
       timeIn: person.time_in,
       timeOut: person.time_out,
-      gate: person.status === 'No scan' ? 'Absent' : 'Present',
-      override: person.status === 'No scan' ? 'Absent' : person.status,
+      gate: person.status === 'No scan' ? 'Pending' : 'Recorded',
+      override: person.status,
       remark: person.correction_reason || '',
       absences: person.status === 'Absent' ? 1 : 0,
     }));
@@ -53,12 +52,6 @@ export default function SF2Dashboard() {
           Daily SF2 Attendance
         </button>
         <button 
-          onClick={() => setActiveTab('grading')}
-          style={{ padding: '8px 16px', background: activeTab === 'grading' ? 'var(--primary-color)' : 'transparent', color: activeTab === 'grading' ? 'white' : 'var(--text-secondary)', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 600, transition: 'all 0.2s' }}
-        >
-          Grading Module
-        </button>
-        <button 
           onClick={() => setActiveTab('reports')}
           style={{ padding: '8px 16px', background: activeTab === 'reports' ? 'var(--primary-color)' : 'transparent', color: activeTab === 'reports' ? 'white' : 'var(--text-secondary)', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 600, transition: 'all 0.2s' }}
         >
@@ -69,10 +62,6 @@ export default function SF2Dashboard() {
       {/* Dynamic Module Rendering */}
       {activeTab === 'attendance' && (
         <SectionAttendance students={students} isLocked={false} onStudentClick={setSelectedStudent} />
-      )}
-
-      {activeTab === 'grading' && (
-        <GradingModule students={students} classKey={currentClass} onStudentClick={setSelectedStudent} />
       )}
 
       {activeTab === 'reports' && (
