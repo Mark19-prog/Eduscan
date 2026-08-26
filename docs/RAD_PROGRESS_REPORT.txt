@@ -5,7 +5,7 @@ Project Title:
 EduScan: A Web-Based Facial Recognition System for Automated Attendance and Grading Reports for San Jose National High School
 
 Reporting Period:
-2026-07-23 to 2026-08-26
+2026-07-23 to 2026-08-27
 
 Prepared For:
 Capstone project progress reporting and group presentation
@@ -154,12 +154,12 @@ User Workflow Design Completed:
 
 Data Design Completed:
 
-- Structured identity, attendance, grading, schedule, calendar, user, audit, and configuration records are stored in SQLite.
+- Structured identity, attendance, grading, schedule, calendar, user, audit, and configuration records are stored through SQLAlchemy in the configured SQL database. MySQL is active for the current school-server configuration, while SQLite remains supported for a single-laptop installation.
 - Biometric samples are stored as encrypted files outside the website’s public directory.
-- SQLite stores the structured metadata that links each encrypted sample to an authorized person.
-- The trained LBPH model is stored as an encrypted file with version and integrity metadata in SQLite.
+- The configured SQL database stores the structured metadata that links each encrypted sample to an authorized person.
+- The trained LBPH model is stored as an encrypted file with version and integrity metadata in the configured SQL database.
 - The temporary attendance workbook and official SF2 workbook are generated from validated database records.
-- Backup packages contain the SQLite database, encryption key, face samples, LBPH models, and SF2 templates as one encrypted recovery set.
+- Backup packages contain a consistent SQLite backup or MySQL SQL dump together with the matching application secret, encryption key, face samples, LBPH models, and SF2 templates as one encrypted recovery set.
 
 Process Design Completed:
 
@@ -206,13 +206,13 @@ Recommended Screenshots for This Stage:
 - Administration > Accounts showing user roles and account maintenance
 - Administration > Academic structure showing school years, grading periods, grade levels, sections, and subjects
 - Administration > Roster import showing preview-before-import workflow
-- Administration > Backup & recovery showing encrypted backup and staged restoration controls
+- Oversight > Backup schedule and inventory, together with the controlled restore screen or PowerShell restore procedure
 
 
 5. RAD STAGE 3: RAPID CONSTRUCTION
 
 Status:
-Completed for the requested local capstone scope. Hardware and school-wide volume testing remain part of Cutover.
+Substantially completed for the requested local capstone scope. Hardware, school-wide volume testing, formal acceptance, and field-discovered refinements remain part of Cutover.
 
 Purpose of the Stage:
 The working system is built through short, testable iterations. Features are connected to real storage and processes instead of remaining static demonstrations.
@@ -325,7 +325,7 @@ Recommended Screenshots for This Stage:
 - Administration > Academic structure showing the active school year and four quarters
 - Administration > Roster import showing a successful validation result and import audit
 - Generated SF2 workbook showing alphabetically arranged names in the correct male or female block
-- Administration > Backup & recovery showing the encrypted backup list
+- Oversight > Backup schedule and inventory showing the encrypted backup list and integrity details
 
 
 6. RAD STAGE 4: CUTOVER
@@ -347,6 +347,10 @@ Completed Cutover Activities:
 - [2026-08-17]: The live Administration, System Setup, Grading, and Scanner screens were checked without browser console errors.
 - [2026-08-17]: The disaster-recovery verification procedure passed in an isolated temporary environment.
 - [2026-08-17]: The updated system documentation and recovery runbook were completed.
+- [2026-08-25]: A real SMS was successfully accepted by the configured Android SMS Gateway and received by the intended test phone number.
+- [2026-08-26]: The working school-server data was migrated to MySQL using the restricted EduScan application account and the backend health response reported database=mysql.
+- [2026-08-27]: The live MySQL schema was advanced through migration 0008_completion_workflows.
+- [2026-08-27]: Python compilation, frontend lint, the production build, live startup, endpoint registration, and browser-console sanity checks passed for the completion-workflow release; the formal test suite remained deferred by project direction.
 
 Pending Cutover Activities:
 
@@ -358,8 +362,8 @@ Pending Cutover Activities:
 - Enroll authorized students, faculty, and non-teaching personnel using the approved consent and identity-verification procedure.
 - Conduct an on-site multi-person camera test under actual gate distance, lighting, crowd, angle, and network conditions.
 - Establish an operational response for unknown faces, rejected recognition, duplicate scans, device failure, and manual fallback attendance.
-- Configure the dedicated Android SMS gateway using the school-controlled phone and SIM.
-- Conduct real time-in, time-out, tardiness, absence, retry, and failure-recovery SMS tests with approved test recipients.
+- Move the proven Android SMS configuration to the final school-controlled phone, SIM, reserved private address, and approved operating procedure.
+- Complete the remaining tardiness, absence, retry, delivery-reconciliation, and failure-recovery SMS scenarios with approved recipients under on-site conditions.
 - Verify the official SF2 output with the class adviser and records officer before monthly submission.
 - Train administrators, teachers, scanner operators, guards, records personnel, and support personnel.
 - Conduct formal user acceptance testing with approved participants.
@@ -387,7 +391,7 @@ Recommended Screenshots for This Stage:
 - API health response showing a working database and active model
 - System Setup showing the enabled LBPH runtime and active model details
 - Administration showing migrated school records
-- Administration > Backup & recovery showing an official encrypted backup after the group creates it
+- Oversight > Backup schedule and inventory showing an official encrypted backup after the group creates it
 - Android SMS outbox showing an actual sent test and any controlled retry result
 - Scanner showing an authorized real-device recognition result
 - Attendance showing an actual day’s time-in, exit, re-entry, and final time-out
@@ -517,19 +521,109 @@ Iteration 8: School Cutover and Evaluation
 - [2026-08-27]: MySQL schema migration 0008, Python compilation, frontend lint, production build, live startup, endpoint registration, and browser-console sanity checks completed; formal testing remained deferred.
 
 
-9. CURRENT RAD PHASE SUMMARY
+9. CURRENT RAD PHASE AND COMPLETION SUMMARY
+
+Completion Basis:
+
+The percentage is a management estimate based on completed RAD deliverables, not a count of source files or buttons. It separates construction of the software from completion of the entire capstone study. Percentages should be updated only when the listed evidence has been completed and retained.
+
+Software Implementation Completion: 92 percent
+
+- Core attendance, repeated movement, schedule-specific closing, SMS, grading, reporting, SF2, administration, MySQL, biometrics, auditing, retention, and recovery workflows are implemented.
+- The remaining implementation allowance covers refinements discovered during approved on-site use, broader liveness/anti-spoof calibration, device-volume tuning, and corrections found during formal acceptance.
+
+Overall Capstone Completion: 77 percent
+
+Weighted RAD Calculation:
+
+- Requirements Planning: 10 of 10 weighted points. Status: 100 percent complete for the approved scope.
+- User Design: 14 of 15 weighted points. Status: approximately 93 percent complete; formal end-user usability feedback can still produce interface revisions.
+- Rapid Construction: 41 of 45 weighted points. Status: approximately 92 percent complete; the requested operational modules are implemented, with field-discovered refinements still reserved.
+- Cutover and Deployment: 7 of 15 weighted points. Status: approximately 47 percent complete; local startup, MySQL migration, Android SMS proof, migration, and release checks are complete, while approved school data, training, on-site operation, and final deployment controls remain pending.
+- Formal Validation and ISO 25010 Evaluation: 5 of 15 weighted points. Status: approximately 33 percent complete; technical compilation, lint, production build, earlier integration evidence, and browser sanity checks exist, but the deferred formal acceptance, on-site accuracy/reliability trials, recovery drill, evaluation administration, analysis, and sign-off are not complete.
+- Total: 77 of 100 weighted points.
+
+Current Phase Status:
 
 - Requirements Planning: Completed for current scope
-- User Design: Completed for current working interface
-- Rapid Construction: Completed for requested local capstone functions
+- User Design: Completed subject to formal user feedback
+- Rapid Construction: Substantially completed for requested local capstone functions
 - Cutover: In progress
 - Formal School User Acceptance: Pending
 - ISO 25010 Evaluation: Pending
 - Full Production Deployment: Pending final approvals and on-site verification
 
+Progress Interpretation:
 
-10. CONCLUSION
+- The group may report that the working software is approximately 92 percent implemented.
+- The group should report the whole capstone as approximately 77 percent complete because a capstone includes validation, evaluation, documented acceptance, deployment readiness, and final manuscript evidence, not only working code.
+- The completion percentage must not be raised to 100 percent until the pending Cutover activities and ISO 25010 evidence are completed.
+
+
+10. SCREENSHOT EVIDENCE PLAN
+
+Screenshot Rules:
+
+- Use only authorized demonstration records or consented test participants.
+- Hide or blur complete guardian phone numbers, passwords, gateway credentials, backup passphrases, encryption keys, and any unnecessary learner identifiers.
+- Keep the browser address or page heading visible when it helps identify the interface.
+- Capture success messages, dates, reporting filters, model version, audit actor, or file hash when these are the evidence for the feature.
+- Do not stage recognition using an unauthorized person or include real student biometric images in the written report without the approved basis.
+
+Recommended Screenshots to Capture Now:
+
+- Screenshot 01 - Login: Capture the EduScan login page and the notice explaining assigned accounts and required temporary-password replacement. Evidence for role-based entry and account security.
+- Screenshot 02 - Account Security: Capture the mandatory password-change screen with the password requirements visible. Do not show typed passwords.
+- Screenshot 03 - Administrator Dashboard: Capture the operational summary cards and recent attendance or SMS indicators. Evidence for the integrated administrator workspace.
+- Screenshot 04 - Gate Scanner: Capture the enlarged camera workspace together with API, database, camera, SMS, and LBPH health indicators. During an authorized demonstration, include two recognized people in one frame if both have consented.
+- Screenshot 05 - Repeated Movement Log: Capture one authorized identity showing Time In, Time Out, Time In, and Time Out in chronological order. Evidence for automatic alternation without Entry or Exit modes.
+- Screenshot 06 - Biometric Enrollment: Capture System Setup > Face enrollments with active model version, sample count, enrollment status, and biometric change history. Use a consented test identity.
+- Screenshot 07 - Attendance Rules and Schedules: Capture the class or personnel schedule showing start time, late grace, meeting days, and its schedule-specific absence cutoff.
+- Screenshot 08 - Calendar Handling: Capture holiday, suspension, special-schedule, and excused-absence records in System Setup. One screenshot may show the list; use a second only if the records do not fit legibly.
+- Screenshot 09 - Android SMS: Capture System Setup > Android SMS showing Phone reachable and an outbox row whose status demonstrates accepted, sent, or delivered processing. Mask the recipient number and do not show gateway credentials.
+- Screenshot 10 - Raw-Score Gradebook: Capture school year, quarter, subject, grade, section, assessment highest-possible scores, learner raw scores, and Scored, Missing, Excused, or Incomplete status controls.
+- Screenshot 11 - Grade Accountability: Capture a finalized or locked gradebook and the grade-change audit showing the required reason and before/after history. Do not expose unnecessary learner records.
+- Screenshot 12 - Attendance and Grading Reports: Capture the Reports page with a selected date range or academic period, export/print controls, generated-report hash, and records-officer review status.
+- Screenshot 13 - Academic Administration: Capture Administration showing active school year, grading periods, grade levels, sections, subjects, and adviser assignment.
+- Screenshot 14 - Roster and Duplicate Safeguards: Capture an approved XLSX validation preview or import audit and the unique student ID/LRN validation result. Do not display a complete real roster unless approved.
+- Screenshot 15 - Official SF2 Output: Open the generated XLSX and capture the grade/section header plus alphabetically arranged learners in the appropriate male and female blocks. Include a transferee remark when using an authorized demonstration record.
+- Screenshot 16 - Oversight and Unified Audit: Capture the Oversight page showing service health and audit rows for an account, schedule, setting, report, or backup change.
+- Screenshot 17 - Recognition Review: Capture an unknown-face or liveness-review item and its review status. The review should not contain a retained face image.
+- Screenshot 18 - Retention and Legal Holds: Capture the retention preview, legal-hold register, approval control, and disposal-certificate history. Evidence that official attendance and grades are protected from automatic cleanup.
+- Screenshot 19 - Backup and Recovery: Capture the scheduled encrypted-backup settings and inventory showing database type, file hash, key fingerprint, active model version, destination, and success/failure status. Hide the passphrase and sensitive destination details if required.
+- Screenshot 20 - Migration and Live Database: Capture PowerShell or API output showing migration 0008_completion_workflows and database=mysql. This is the appropriate evidence because database migrations have no end-user screen.
+
+Interface Route Guide:
+
+- Login: /login
+- Password change: /account/security
+- Gate scanner: /scanner
+- Administrator dashboard: /dashboard
+- Administrator attendance: /dashboard/attendance
+- Administrator grading: /dashboard/grading
+- Reports and report history: /dashboard/reports
+- Oversight, audit, retention, reviews, and backup inventory: /dashboard/oversight
+- Attendance, biometric, SMS, calendar, and compliance setup: /dashboard/setup
+- People, accounts, academic references, and roster import: /dashboard/administration
+- Teacher attendance: /teacher/attendance
+- Teacher grading: /teacher/grading
+- Teacher reports: /teacher/reports
+- Teacher schedules: /teacher/schedules
+
+Screenshots to Capture During Formal Cutover:
+
+- On-site gate view under actual lighting, distance, angle, and normal arrival flow
+- Approved multi-person recognition and manual fallback exercise
+- Tardiness, absence, retry, delivered, and failed SMS evidence using approved recipients
+- Restored test server after the isolated disaster-recovery drill, including measured recovery time and recovery point
+- Temporary attendance workbook and official SF2 reviewed by the adviser or records officer
+- User training attendance and signed user-acceptance evidence
+- ISO 25010 questionnaire administration and summarized Likert-scale results
+- Final corrective-action log and deployment approval
+
+
+11. CONCLUSION
 
 EduScan has progressed beyond an interface prototype and now operates as a persistent local web application with real LBPH training and prediction, liveness review, hardened and restricted role-based accounts, automatically alternating time-in/time-out attendance, class and personnel duty schedules/cutoffs, school-wide and adviser-scoped records, audited correction/reset records, repeated gate events, multiple-face processing, schedule-aware automated absence closing, reconciled Android SMS delivery controls, raw-score/finalizable grading and grading reports, transferee-aware official SF2 generation, hashed report review, unified audit, administrative data management, approved roster import, legal-hold/retention controls, biometric and school-record disposal controls, scheduled encrypted SQLite/MySQL backup and controlled restoration, versioned database migrations, and a verified SQLite-to-MySQL migration path.
 
-Under the RAD methodology, Requirements Planning and User Design are complete for the current scope, while Rapid Construction has completed another operational-hardening iteration. Formal testing has been deferred by project direction and has not been claimed for the 2026-08-26 changes. Cutover and evaluation remain pending: institutional approval evidence, approved-data preparation, isolated recovery testing, physical gate evaluation, trained-user acceptance, SF2 validation, and ISO 25010 evaluation must be completed and documented before the system can be declared fully deployed at San Jose National High School.
+Under the RAD methodology, Requirements Planning is complete for the current scope, User Design is complete subject to formal feedback, and Rapid Construction is substantially complete at an estimated 92 percent. The overall capstone is estimated at 77 percent because formal testing was deferred and Cutover and Evaluation remain incomplete. Institutional approval evidence, approved-data preparation, isolated recovery testing, physical gate evaluation, trained-user acceptance, SF2 validation, ISO 25010 evaluation, corrective-action closure, and final sign-off must be completed and documented before the system can be declared fully deployed at San Jose National High School.
