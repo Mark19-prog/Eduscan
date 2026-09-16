@@ -251,6 +251,7 @@ class EduScanSmokeTest(unittest.TestCase):
             "0006_remove_station_direction_mode",
             "0007_personnel_attendance_schedules",
             "0008_completion_workflows",
+            "0009_grading_policy_engine",
         ])
         inspector = inspect(legacy_engine)
         self.assertTrue(inspector.has_table("attendance_reset_audits"))
@@ -420,7 +421,7 @@ class EduScanSmokeTest(unittest.TestCase):
                 ProcessedFace(base_faces[1], b"face-b", 96, (120, 10, 100, 100)),
             ]):
                 matches = biometric_service.recognize_many(db, b"two-face-frame")
-            self.assertEqual({match[0].id for match in matches if match[0]}, {item["id"] for item in people})
+            self.assertEqual({match["person"].id for match in matches if match.get("person")}, {item["id"] for item in people})
 
         workbook = Workbook(); sheet = workbook.active
         sheet.append(["External ID", "Full Name", "Sex", "Role", "Grade", "Section", "LRN"])

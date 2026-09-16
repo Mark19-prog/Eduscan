@@ -38,6 +38,12 @@ def dispose_person_records(db: Session, person: Person, actor: User, reason: str
     db.execute(delete(SmsOutbox).where(SmsOutbox.person_id == person.id))
     db.execute(delete(Intervention).where(Intervention.person_id == person.id))
     db.execute(delete(BiometricAuditEvent).where(BiometricAuditEvent.person_id == person.id))
+    from ..models import RecognitionReview
+    from ..models_grading import StudentScore, GradeAdjustmentRequest, GradebookAuditEntry
+    db.execute(delete(RecognitionReview).where(RecognitionReview.candidate_person_id == person.id))
+    db.execute(delete(StudentScore).where(StudentScore.person_id == person.id))
+    db.execute(delete(GradeAdjustmentRequest).where(GradeAdjustmentRequest.person_id == person.id))
+    db.execute(delete(GradebookAuditEntry).where(GradebookAuditEntry.person_id == person.id))
     for audit in db.scalars(select(GradeChangeAudit)).all():
         before = json.loads(audit.before_json)
         after = json.loads(audit.after_json)

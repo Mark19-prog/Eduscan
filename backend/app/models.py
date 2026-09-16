@@ -465,3 +465,11 @@ class Intervention(Base):
     actor_name: Mapped[str] = mapped_column(String(180))
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
     person: Mapped[Person] = relationship()
+
+
+# Import new grading models so they are registered with SQLAlchemy metadata.
+# Placed here to avoid circular imports while ensuring create_all picks them up.
+from .models_grading import (  # noqa: E402, F401
+    AssessmentItem, Gradebook, GradebookAuditEntry, GradebookComponent,
+    GradeAdjustmentRequest, GradingPolicy, StudentScore,
+)

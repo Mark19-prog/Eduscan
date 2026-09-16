@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+import json
 
 from sqlalchemy import inspect, text
 from sqlalchemy.engine import Engine
@@ -18,6 +19,7 @@ MIGRATIONS = (
     ("0006_remove_station_direction_mode", "Remove the rejected manual scanner direction mode"),
     ("0007_personnel_attendance_schedules", "Add faculty and non-teaching duty schedules"),
     ("0008_completion_workflows", "Add reporting, grade finalization, audit, retention, SMS reconciliation, liveness review, and backup scheduling"),
+    ("0009_grading_policy_engine", "Add policy-configurable gradebook engine and audit tables"),
 )
 
 
@@ -94,6 +96,113 @@ def run_migrations(engine: Engine) -> list[str]:
                 _add_column_if_missing(connection, "sms_outbox", "exhausted_at", "DATETIME NULL")
                 _add_column_if_missing(connection, "sms_outbox", "gateway_status_checked_at", "DATETIME NULL")
                 _create_index_if_missing(connection, "grade_scores", "ix_grade_scores_status", "status")
+            elif version == "0009_grading_policy_engine":
+                Base.metadata.create_all(bind=connection)
+                has_policies = connection.execute(text("SELECT COUNT(*) FROM grading_policies")).scalar()
+                if not has_policies:
+                    from .services.grading_engine import build_default_transmutation_table
+                    default_table_json = json.dumps(build_default_transmutation_table())
+                    policies = [
+                        {
+                            "name": "DepEd Order No. 8, s. 2015 (JHS Languages/AP/EsP)",
+                            "version": "1.0",
+                            "description": "Standard DepEd K-12 grading policy for Languages, Araling Panlipunan, and Edukasyon sa Pagpapakatao (Grades 7-10)",
+                            "school_year": "2026-2027",
+                            "grade_levels": "7,8,9,10",
+                            "subject_category": "Languages/AP/EsP",
+                            "component_definitions_json": json.dumps([
+                                {"name": "Written Work", "component_type": "Written Work", "weight": 30.0, "description": "Quizzes, unit tests, written outputs"},
+                                {"name": "Performance Tasks", "component_type": "Performance Task", "weight": 50.0, "description": "Projects, presentations, oral outputs, practical demonstrations"},
+                                {"name": "Quarterly Assessment", "component_type": "Quarterly Assessment", "weight": 20.0, "description": "Periodical examination"},
+                            ]),
+                            "transmutation_table_json": default_table_json,
+                            "rounding_decimal_places": 2,
+                            "rounding_final_decimal_places": 0,
+                            "rounding_method": "half_up",
+                            "passing_grade": 75,
+                            "status": "Active",
+                            "created_by_name": "System",
+                            "created_at": datetime.utcnow(),
+                            "updated_at": datetime.utcnow(),
+                        },
+                        {
+                            "name": "DepEd Order No. 8, s. 2015 (JHS Math & Science)",
+                            "version": "1.0",
+                            "description": "Standard DepEd K-12 grading policy for Mathematics and Science (Grades 7-10)",
+                            "school_year": "2026-2027",
+                            "grade_levels": "7,8,9,10",
+                            "subject_category": "Math/Science",
+                            "component_definitions_json": json.dumps([
+                                {"name": "Written Work", "component_type": "Written Work", "weight": 40.0, "description": "Quizzes, unit tests, problem sets"},
+                                {"name": "Performance Tasks", "component_type": "Performance Task", "weight": 40.0, "description": "Lab experiments, projects, problem-solving demonstrations"},
+                                {"name": "Quarterly Assessment", "component_type": "Quarterly Assessment", "weight": 20.0, "description": "Periodical examination"},
+                            ]),
+                            "transmutation_table_json": default_table_json,
+                            "rounding_decimal_places": 2,
+                            "rounding_final_decimal_places": 0,
+                            "rounding_method": "half_up",
+                            "passing_grade": 75,
+                            "status": "Active",
+                            "created_by_name": "System",
+                            "created_at": datetime.utcnow(),
+                            "updated_at": datetime.utcnow(),
+                        },
+                        {
+                            "name": "DepEd Order No. 8, s. 2015 (JHS MAPEH & TLE)",
+                            "version": "1.0",
+                            "description": "Standard DepEd K-12 grading policy for MAPEH, EPP, and TLE (Grades 7-10)",
+                            "school_year": "2026-2027",
+                            "grade_levels": "7,8,9,10",
+                            "subject_category": "MAPEH/TLE",
+                            "component_definitions_json": json.dumps([
+                                {"name": "Written Work", "component_type": "Written Work", "weight": 20.0, "description": "Quizzes, worksheets, written tests"},
+                                {"name": "Performance Tasks", "component_type": "Performance Task", "weight": 60.0, "description": "Skills demonstration, practical performance, physical tests"},
+                                {"name": "Quarterly Assessment", "component_type": "Quarterly Assessment", "weight": 20.0, "description": "Periodical examination"},
+                            ]),
+                            "transmutation_table_json": default_table_json,
+                            "rounding_decimal_places": 2,
+                            "rounding_final_decimal_places": 0,
+                            "rounding_method": "half_up",
+                            "passing_grade": 75,
+                            "status": "Active",
+                            "created_by_name": "System",
+                            "created_at": datetime.utcnow(),
+                            "updated_at": datetime.utcnow(),
+                        },
+                        {
+                            "name": "General Secondary Default Policy",
+                            "version": "1.0",
+                            "description": "General fallback grading policy for high school subjects",
+                            "school_year": "2026-2027",
+                            "grade_levels": "7,8,9,10,11,12",
+                            "subject_category": "General",
+                            "component_definitions_json": json.dumps([
+                                {"name": "Written Work", "component_type": "Written Work", "weight": 30.0, "description": "Quizzes and written outputs"},
+                                {"name": "Performance Tasks", "component_type": "Performance Task", "weight": 50.0, "description": "Projects, performance tasks"},
+                                {"name": "Quarterly Assessment", "component_type": "Quarterly Assessment", "weight": 20.0, "description": "Quarterly exams"},
+                            ]),
+                            "transmutation_table_json": default_table_json,
+                            "rounding_decimal_places": 2,
+                            "rounding_final_decimal_places": 0,
+                            "rounding_method": "half_up",
+                            "passing_grade": 75,
+                            "status": "Active",
+                            "created_by_name": "System",
+                            "created_at": datetime.utcnow(),
+                            "updated_at": datetime.utcnow(),
+                        }
+                    ]
+                    for p in policies:
+                        connection.execute(text(
+                            "INSERT INTO grading_policies (name, version, description, school_year, grade_levels, "
+                            "subject_category, component_definitions_json, transmutation_table_json, "
+                            "rounding_decimal_places, rounding_final_decimal_places, rounding_method, passing_grade, "
+                            "status, created_by_name, created_at, updated_at) VALUES ("
+                            ":name, :version, :description, :school_year, :grade_levels, :subject_category, "
+                            ":component_definitions_json, :transmutation_table_json, :rounding_decimal_places, "
+                            ":rounding_final_decimal_places, :rounding_method, :passing_grade, :status, "
+                            ":created_by_name, :created_at, :updated_at)"
+                        ), p)
             connection.execute(
                 text("INSERT INTO schema_migrations (version, description, applied_at) VALUES (:version, :description, :applied_at)"),
                 {"version": version, "description": description, "applied_at": datetime.utcnow()},

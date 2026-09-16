@@ -161,7 +161,7 @@ def send_record(db: Session, record: SmsOutbox) -> SmsOutbox:
     recent_sent = db.scalar(select(func.count(SmsOutbox.id)).where(
         SmsOutbox.status.in_(["accepted", "processed", "sent", "delivered"]), SmsOutbox.sent_at >= sent_since,
     )) or 0
-    if recent_sent >= config["max_messages_per_30_minutes"]:
+    if recent_sent >= config.get("max_messages_per_30_minutes", 50):
         record.status = "queued"
         record.next_attempt_at = now + timedelta(minutes=5)
         record.last_error = "Local 30-minute SMS safety limit reached; delivery was deferred"
