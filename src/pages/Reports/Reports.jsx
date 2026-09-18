@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { CheckCircle2, Download, FileClock, FileSpreadsheet, Printer } from 'lucide-react';
 import SF2ReportGenerator from '../../components/Teacher/SF2ReportGenerator';
 import { api, auth, localDate } from '../../api/client';
+import { useToast } from '../../contexts/ToastContext';
 
 export default function Reports() {
   const today = localDate();
@@ -13,15 +14,14 @@ export default function Reports() {
   const [sections, setSections] = useState([]);
   const [history, setHistory] = useState([]);
   const [review, setReview] = useState({});
-  const [error, setError] = useState('');
-  const [notice, setNotice] = useState('');
+  const { showSuccess, showError } = useToast();
 
   const load = async () => {
     try {
       const [available, reports] = await Promise.all([api.get('/my/advisory-sections'), api.get('/reports/history')]);
       setSections(available); setHistory(reports);
       if (available.length && !grade) { setGrade(available[0].grade); setSection(available[0].section); }
-    } catch (err) { setError(err.message); }
+    } catch (err) { showError(err.message); }
   };
   useEffect(() => { load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -39,13 +39,12 @@ export default function Reports() {
   const markReport = async (item, status) => {
     try {
       await api.post(`/reports/history/${item.id}/review`, { status, note: review[item.id] || `Records review: ${status}` });
-      setNotice(`Report marked ${status}.`); await load();
-    } catch (err) { setError(err.message); }
+      showSuccess(`Report marked ${status}.`); await load();
+    } catch (err) { showError(err.message); }
   };
 
   return <div className="page-stack">
-    <div className="page-heading"><div><p className="eyebrow">Official records workspace</p><h1>Reports</h1><p>Generate date-range attendance, personnel monthly summaries, SF2 workbooks, and review registered report files.</p></div></div>
-    {error && <div className="notice notice-danger">{error}</div>}{notice && <div className="notice notice-success"><CheckCircle2 size={17} /> {notice}</div>}
+
     <section className="card-static">
       <div className="section-heading"><div><p className="eyebrow">Selected reporting period</p><h2>Attendance and movement summary</h2></div><FileSpreadsheet size={24} /></div>
       <div className="form-grid three-columns">
@@ -55,7 +54,7 @@ export default function Reports() {
         {role === 'Student' && <label><span className="field-label">Section</span><select className="input-field" value={`${grade}|${section}`} onChange={(event) => chooseSection(event.target.value)}><option value="|">All authorized sections</option>{sections.map((item) => <option key={item.id} value={`${item.grade}|${item.section}`}>Grade {item.grade} — {item.section}</option>)}</select></label>}
       </div>
       <p className="section-copy">Faculty and non-teaching selections produce monthly personnel attendance output for the same range. Every registered XLSX includes generation metadata and a SHA-256 integrity hash.</p>
-      <div className="action-row"><button className="btn-primary" onClick={() => api.download(`/attendance/report.xlsx?${query()}`, 'attendance-report.xlsx').then(load).catch((err) => setError(err.message))}><Download size={16} /> Export XLSX</button><button className="btn-secondary" onClick={() => api.printHtml(`/attendance/report/print?${query()}`).catch((err) => setError(err.message))}><Printer size={16} /> Printable report</button></div>
+      <div className="action-row"><button className="btn-primary" onClick={() => api.download(`/attendance/report.xlsx?${query()}`, 'attendance-report.xlsx').then(load).catch((err) => showError(err.message))}><Download size={16} /> Export XLSX</button><button className="btn-secondary" onClick={() => api.printHtml(`/attendance/report/print?${query()}`).catch((err) => showError(err.message))}><Printer size={16} /> Printable report</button></div>
     </section>
     <SF2ReportGenerator />
     <section className="card-static">

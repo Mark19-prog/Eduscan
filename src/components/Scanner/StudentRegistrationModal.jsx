@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { X, Camera, ScanFace, CheckCircle, Database, AlertTriangle } from 'lucide-react';
 import { api, captureVideoFrame } from '../../api/client';
+import { useToast } from '../../contexts/ToastContext';
 
 const targetFrames = 20;
 
@@ -12,8 +13,7 @@ export default function StudentRegistrationModal({ onClose, onSaved, person = nu
   const [cameraOn, setCameraOn] = useState(false);
   const [isCapturing, setIsCapturing] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState('');
-  const [notice, setNotice] = useState('');
+  const { showSuccess, showError } = useToast();
   const [personId, setPersonId] = useState(person?.person_id || null);
   const [form, setForm] = useState({ external_id: '', lrn: '', full_name: '', sex: 'Male', role: 'Student', grade: '10', section: 'Rizal', assignment: '', guardian_phone: '', biometric_consent: false });
   const [changeReason, setChangeReason] = useState('');
@@ -22,18 +22,17 @@ export default function StudentRegistrationModal({ onClose, onSaved, person = nu
   const patch = (field, value) => setForm((current) => ({ ...current, [field]: value }));
 
   const startCamera = async () => {
-    setError('');
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width: { ideal: 960 }, height: { ideal: 720 } }, audio: false });
       streamRef.current = stream;
       videoRef.current.srcObject = stream;
       await videoRef.current.play();
       setCameraOn(true);
-    } catch (err) { setError(`Camera could not start: ${err.message}`); }
+    } catch (err) { showError(`Camera could not start: ${err.message}`); }
   };
 
   const captureDataset = async () => {
-    setError(''); setNotice(''); setFrames([]); setIsCapturing(true);
+    setFrames([]); setIsCapturing(true);
     const collected = [];
     try {
       for (let index = 0; index < targetFrames; index += 1) {
@@ -41,16 +40,16 @@ export default function StudentRegistrationModal({ onClose, onSaved, person = nu
         setFrames([...collected]);
         await new Promise((resolve) => window.setTimeout(resolve, 220));
       }
-      setNotice(`${collected.length} real camera frames captured. The server will quality-check each face before training.`);
-    } catch (err) { setError(err.message); }
+      showSuccess(`${collected.length} real camera frames captured. The server will quality-check each face before training.`);
+    } catch (err) { showError(err.message); }
     finally { setIsCapturing(false); }
   };
 
   const saveAndTrain = async () => {
-    if (!(isReplacement ? person.biometric_consent : form.biometric_consent)) return setError('Confirm the documented consent/authorization before biometric enrollment.');
-    if (isReplacement && changeReason.trim().length < 8) return setError('Enter a specific re-enrollment reason of at least 8 characters.');
-    if (frames.length < targetFrames) return setError(`Capture all ${targetFrames} camera frames first.`);
-    setSaving(true); setError('');
+    if (!(isReplacement ? person.biometric_consent : form.biometric_consent)) return showError('Confirm the documented consent/authorization before biometric enrollment.');
+    if (isReplacement && changeReason.trim().length < 8) return showError('Enter a specific re-enrollment reason of at least 8 characters.');
+    if (frames.length < targetFrames) return showError(`Capture all ${targetFrames} camera frames first.`);
+    setSaving(true);
     try {
       let id = personId;
       if (!id) {
@@ -65,9 +64,9 @@ export default function StudentRegistrationModal({ onClose, onSaved, person = nu
       const result = isReplacement
         ? await api.put(`/biometrics/enrollments/${id}`, multipart)
         : await api.post(`/biometrics/enrollments/${id}`, multipart);
-      setNotice(`${result.accepted} quality samples encrypted and saved. LBPH model ${result.model.version} trained for ${result.model.person_count} person(s).`);
+      showSuccess(`${result.accepted} quality samples encrypted and saved. LBPH model ${result.model.version} trained for ${result.model.person_count} person(s).`);
       window.setTimeout(() => onSaved?.(result), 1800);
-    } catch (err) { setError(`${err.message}${personId ? ' You can capture again and retry enrollment for this registered person.' : ''}`); }
+    } catch (err) { showError(`${err.message}${personId ? ' You can capture again and retry enrollment for this registered person.' : ''}`); }
     finally { setSaving(false); }
   };
 
@@ -95,8 +94,6 @@ export default function StudentRegistrationModal({ onClose, onSaved, person = nu
           {!cameraOn ? <button className="btn-primary" onClick={startCamera}><Camera size={16} /> Enable camera</button> : <button className="btn-secondary" onClick={captureDataset} disabled={isCapturing}>{isCapturing ? 'Capturing real frames…' : 'Capture enrollment frames'}</button>}
         </div>
       </div>
-      {error && <div className="notice notice-danger"><AlertTriangle size={18} /> {error}</div>}
-      {notice && <div className="notice notice-success"><CheckCircle size={18} /> {notice}</div>}
       <div className="modal-actions"><button className="btn-secondary" onClick={onClose}>Cancel</button><button className="btn-primary" onClick={saveAndTrain} disabled={saving || frames.length < targetFrames}><Database size={16} /> {saving ? 'Quality-checking & training…' : isReplacement ? 'Replace samples & retrain model' : 'Save encrypted samples & train model'}</button></div>
     </div></div>
   );

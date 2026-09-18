@@ -1,23 +1,18 @@
-import { Calculator, CheckCircle2, HelpCircle, Shield, X, XCircle } from 'lucide-react';
+import { X } from 'lucide-react';
 
 export default function CalculationBreakdown({ breakdown, onClose }) {
   if (!breakdown) return null;
 
-  const isPassing = breakdown.status === 'Passing';
+  const isPassing = breakdown.status === 'Passed';
   const isComplete = breakdown.complete;
 
   return (
     <div className="modal-backdrop">
       <div className="modal-card modal-md">
         <div className="modal-header">
-          <div className="breakdown-title-group">
-            <div className="breakdown-icon-circle">
-              <Calculator size={20} />
-            </div>
-            <div>
-              <h3>Grade Computation Breakdown</h3>
-              <p className="modal-subtitle">{breakdown.student_name}</p>
-            </div>
+          <div>
+            <h3>Grade Computation Breakdown</h3>
+            <p className="modal-subtitle">{breakdown.student_name}</p>
           </div>
           <button type="button" className="btn-icon" onClick={onClose} aria-label="Close">
             <X size={20} />
@@ -27,7 +22,6 @@ export default function CalculationBreakdown({ breakdown, onClose }) {
         <div className="modal-body">
           {/* Policy context card */}
           <div className="breakdown-policy-banner">
-            <Shield size={16} />
             <span>
               Governing Policy: <strong>{breakdown.policy_name || 'DepEd K-12 Standard'}</strong>
             </span>
@@ -85,29 +79,14 @@ export default function CalculationBreakdown({ breakdown, onClose }) {
                 {breakdown.reported_grade != null ? breakdown.reported_grade : '—'}
               </div>
             </div>
-            <div className="result-meta">
-              <div className="result-status-badge">
-                {isPassing ? (
-                  <>
-                    <CheckCircle2 size={16} className="text-success" />
-                    <span className="text-success font-bold">Passing</span>
-                  </>
-                ) : !isComplete ? (
-                  <>
-                    <HelpCircle size={16} className="text-warning" />
-                    <span className="text-warning font-bold">Incomplete Scores</span>
-                  </>
-                ) : (
-                  <>
-                    <XCircle size={16} className="text-danger" />
-                    <span className="text-danger font-bold">Below Passing</span>
-                  </>
-                )}
+              <div className="result-meta">
+                <span className={`remarks-badge ${isPassing ? 'remarks-passed' : !isComplete ? 'remarks-incomplete' : 'remarks-failed'}`}>
+                  {isPassing ? 'PASSED' : !isComplete ? 'INCOMPLETE' : 'FAILED'}
+                </span>
+                <p className="muted-small" style={{ marginTop: '6px' }}>
+                  Passing Grade Requirement: {breakdown.passing_grade || 75}
+                </p>
               </div>
-              <p className="muted-small">
-                Passing Grade Requirement: {breakdown.passing_grade || 75}
-              </p>
-            </div>
           </div>
 
           {/* DepEd assessment methodology note */}

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { AlertTriangle, CheckCircle2, Eye, History, RefreshCw, ScanFace, Trash2, UserPlus, X } from 'lucide-react';
 import { api } from '../../api/client';
 import StudentRegistrationModal from '../Scanner/StudentRegistrationModal';
+import { useToast } from '../../contexts/ToastContext';
 
 const formatDateTime = (value) => value ? new Date(value).toLocaleString('en-PH') : '—';
 
@@ -9,8 +10,7 @@ export default function BiometricEnrollmentManager({ onModelChanged }) {
   const [enrollments, setEnrollments] = useState([]);
   const [audit, setAudit] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
-  const [notice, setNotice] = useState('');
+  const { showSuccess, showError } = useToast();
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState(null);
   const [viewing, setViewing] = useState(null);
@@ -25,29 +25,25 @@ export default function BiometricEnrollmentManager({ onModelChanged }) {
       ]);
       setEnrollments(rows);
       setAudit(events);
-      setError('');
-    } catch (err) { setError(err.message); }
+    } catch (err) { showError(err.message); }
     finally { setLoading(false); }
-  }, []);
+  }, [showError]);
 
   useEffect(() => { load(); }, [load]);
 
   const changed = async (message) => {
     setCreating(false); setEditing(null); setDeleting(null); setViewing(null);
-    setNotice(message); setError('');
+    showSuccess(message);
     await load();
     await onModelChanged?.();
-    window.setTimeout(() => setNotice(''), 4500);
   };
 
   const viewDetails = async (row) => {
     try { setViewing(await api.get(`/biometrics/enrollments/${row.person_id}`)); }
-    catch (err) { setError(err.message); }
+    catch (err) { showError(err.message); }
   };
 
   return <div className="page-stack" data-testid="biometric-enrollment-manager">
-    {notice && <div className="notice notice-success"><CheckCircle2 size={18} /> {notice}</div>}
-    {error && <div className="notice notice-danger"><AlertTriangle size={18} /> {error}</div>}
     <section className="card-static">
       <div className="section-heading"><div><p className="eyebrow">Encrypted enrollment registry</p><h2>Facial enrollments</h2><p className="section-copy">Create, inspect, replace, or securely delete an enrollment. Source images are never displayed; only operational metadata is shown.</p></div><div className="action-row"><button className="btn-secondary" onClick={load} disabled={loading}><RefreshCw size={16} /> Refresh</button><button className="btn-primary" onClick={() => setCreating(true)}><UserPlus size={16} /> Enroll person</button></div></div>
       <div className="notice notice-blue"><ScanFace size={18} /><span>Every create, re-enrollment, and deletion records the authorized account, timestamp, reason, sample counts, and resulting LBPH model version.</span></div>

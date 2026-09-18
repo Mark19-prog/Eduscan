@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { ArchiveRestore, CheckCircle2, DatabaseBackup, Download, RefreshCw, ShieldCheck } from 'lucide-react';
 import { api, auth } from '../../api/client';
+import { useToast } from '../../contexts/ToastContext';
 
 const defaultRetention = { enabled: false, sms_days: 90, recognition_review_days: 30, biometric_staging_days: 30, operational_log_days: 30, approved_schedule_reference: '' };
 const defaultSchedule = { enabled: false, frequency: 'Daily', run_time: '18:00', retention_count: 14, destination: '', passphrase: '' };
@@ -27,8 +28,7 @@ export default function Oversight() {
   const [smsOutbox, setSmsOutbox] = useState([]);
   const [biometricRuntime, setBiometricRuntime] = useState({ threshold: 65, liveness_enabled: true, liveness_window_seconds: 8, review_failure_threshold: 4 });
   const [compliance, setCompliance] = useState({});
-  const [notice, setNotice] = useState('');
-  const [error, setError] = useState('');
+  const { showSuccess, showError } = useToast();
 
   const load = useCallback(async () => {
     try {
@@ -49,23 +49,22 @@ export default function Oversight() {
         else if (label === 'biometric') setBiometricRuntime(value);
         else if (label === 'compliance') setCompliance(value);
       });
-    } catch (err) { setError(err.message); }
-  }, [auditAccess, backupAccess, biometricAccess, privacyAccess, smsAccess]);
+    } catch (err) { showError(err.message); }
+  }, [auditAccess, backupAccess, biometricAccess, privacyAccess, smsAccess, showError]);
   useEffect(() => { load(); }, [load]);
-  const done = async (message) => { setNotice(message); setError(''); await load(); window.setTimeout(() => setNotice(''), 4000); };
-  const saveRetention = async () => { try { await api.put('/retention', retention); await done('Retention policy saved. Preview the eligible items before an authorized execution.'); } catch (err) { setError(err.message); } };
-  const executeRetention = async () => { try { const result = await api.post('/retention/execute', retentionApproval); await done(`Cleanup completed. Disposal certificate: ${result.certificate_reference}`); } catch (err) { setError(err.message); } };
-  const createHold = async () => { try { await api.post('/legal-holds', { ...hold, subject_reference: hold.subject_reference || null }); setHold({ scope: 'All', subject_reference: '', reason: '', authority_reference: '' }); await done('Legal hold placed. Matching data is protected from retention cleanup.'); } catch (err) { setError(err.message); } };
-  const resolveReview = async (id) => { const note = window.prompt('Enter the documented resolution note:'); if (!note) return; try { await api.post(`/biometrics/reviews/${id}/resolve`, { status: 'Resolved', note }); await done('Recognition review resolved. Use Attendance correction for any manual fallback record.'); } catch (err) { setError(err.message); } };
-  const saveBackupSchedule = async () => { try { await api.put('/admin/backup-schedule', { ...backupSchedule, passphrase: backupSchedule.passphrase || null }); await done('Encrypted backup schedule saved.'); } catch (err) { setError(err.message); } };
-  const createBackup = async () => { const form = new FormData(); form.append('passphrase', manualPassphrase); form.append('destination', backupSchedule.destination || ''); try { await api.post('/admin/backups', form); setManualPassphrase(''); await done('Integrity-hashed encrypted backup completed.'); } catch (err) { setError(err.message); } };
-  const smsAction = async (path, message) => { try { await api.post(path, {}); await done(message); } catch (err) { setError(err.message); } };
-  const saveBiometricRuntime = async () => { try { await api.put('/biometrics/runtime-settings', { threshold: Number(biometricRuntime.threshold), liveness_enabled: biometricRuntime.liveness_enabled, liveness_window_seconds: Number(biometricRuntime.liveness_window_seconds), review_failure_threshold: Number(biometricRuntime.review_failure_threshold) }); await done('Restricted recognition threshold and liveness settings saved.'); } catch (err) { setError(err.message); } };
-  const saveCompliance = async () => { try { await api.put('/settings/compliance', Object.fromEntries(complianceFields.map(([field]) => [field, compliance[field] || '']))); await done('Deployment approval and privacy evidence register saved.'); } catch (err) { setError(err.message); } };
+  const done = async (message) => { showSuccess(message); await load(); };
+  const saveRetention = async () => { try { await api.put('/retention', retention); await done('Retention policy saved. Preview the eligible items before an authorized execution.'); } catch (err) { showError(err.message); } };
+  const executeRetention = async () => { try { const result = await api.post('/retention/execute', retentionApproval); await done(`Cleanup completed. Disposal certificate: ${result.certificate_reference}`); } catch (err) { showError(err.message); } };
+  const createHold = async () => { try { await api.post('/legal-holds', { ...hold, subject_reference: hold.subject_reference || null }); setHold({ scope: 'All', subject_reference: '', reason: '', authority_reference: '' }); await done('Legal hold placed. Matching data is protected from retention cleanup.'); } catch (err) { showError(err.message); } };
+  const resolveReview = async (id) => { const note = window.prompt('Enter the documented resolution note:'); if (!note) return; try { await api.post(`/biometrics/reviews/${id}/resolve`, { status: 'Resolved', note }); await done('Recognition review resolved. Use Attendance correction for any manual fallback record.'); } catch (err) { showError(err.message); } };
+  const saveBackupSchedule = async () => { try { await api.put('/admin/backup-schedule', { ...backupSchedule, passphrase: backupSchedule.passphrase || null }); await done('Encrypted backup schedule saved.'); } catch (err) { showError(err.message); } };
+  const createBackup = async () => { const form = new FormData(); form.append('passphrase', manualPassphrase); form.append('destination', backupSchedule.destination || ''); try { await api.post('/admin/backups', form); setManualPassphrase(''); await done('Integrity-hashed encrypted backup completed.'); } catch (err) { showError(err.message); } };
+  const smsAction = async (path, message) => { try { await api.post(path, {}); await done(message); } catch (err) { showError(err.message); } };
+  const saveBiometricRuntime = async () => { try { await api.put('/biometrics/runtime-settings', { threshold: Number(biometricRuntime.threshold), liveness_enabled: biometricRuntime.liveness_enabled, liveness_window_seconds: Number(biometricRuntime.liveness_window_seconds), review_failure_threshold: Number(biometricRuntime.review_failure_threshold) }); await done('Restricted recognition threshold and liveness settings saved.'); } catch (err) { showError(err.message); } };
+  const saveCompliance = async () => { try { await api.put('/settings/compliance', Object.fromEntries(complianceFields.map(([field]) => [field, compliance[field] || '']))); await done('Deployment approval and privacy evidence register saved.'); } catch (err) { showError(err.message); } };
 
   return <div className="page-stack">
-    <div className="page-heading"><div><p className="eyebrow">Least-privilege operations</p><h1>Oversight and recovery</h1><p>Audit system changes, review rejected recognition attempts, enforce approved retention, and manage recoverable encrypted backups.</p></div><ShieldCheck size={34} /></div>
-    {notice && <div className="notice notice-success"><CheckCircle2 size={18} /> {notice}</div>}{error && <div className="notice notice-danger">{error}</div>}
+
     <section className="card-static"><div className="section-heading"><div><p className="eyebrow">Live service indicators</p><h2>Operational health</h2></div><button className="btn-secondary" onClick={load}><RefreshCw size={16} /> Refresh</button></div>{health && <div className="principle-grid"><div><strong>API / database</strong><span>{health.api && health.database ? 'Ready' : 'Unavailable'}</span></div><div><strong>LBPH model</strong><span>{health.recognition_model ? health.model_version : 'Not trained'}</span></div><div><strong>Android gateway</strong><span>{health.gateway_enabled ? health.gateway_reachable ? 'Reachable' : 'Unreachable' : 'Disabled'}</span></div><div><strong>Checked</strong><span>{new Date(health.checked_at).toLocaleString('en-PH')}</span></div></div>}</section>
 
     {biometricAccess && <section className="card-static"><div className="section-heading"><div><p className="eyebrow">Administrator-restricted matching controls</p><h2>LBPH and liveness settings</h2></div><ShieldCheck size={22} /></div><div className="form-grid three-columns"><label><span className="field-label">LBPH distance threshold</span><input className="input-field" type="number" min="20" max="150" value={biometricRuntime.threshold} onChange={(event) => setBiometricRuntime((current) => ({ ...current, threshold: Number(event.target.value) }))} /></label><label><span className="field-label">Liveness window (seconds)</span><input className="input-field" type="number" min="3" max="30" value={biometricRuntime.liveness_window_seconds} onChange={(event) => setBiometricRuntime((current) => ({ ...current, liveness_window_seconds: Number(event.target.value) }))} /></label><label><span className="field-label">Review occurrence threshold</span><input className="input-field" type="number" min="2" max="20" value={biometricRuntime.review_failure_threshold} onChange={(event) => setBiometricRuntime((current) => ({ ...current, review_failure_threshold: Number(event.target.value) }))} /></label><label className="checkbox-field"><input type="checkbox" checked={biometricRuntime.liveness_enabled} onChange={(event) => setBiometricRuntime((current) => ({ ...current, liveness_enabled: event.target.checked }))} /><span>Require blink-based liveness before recording attendance</span></label></div><p className="section-copy">Lower LBPH distance is a closer match. Calibrate this threshold only with authorized school data. A liveness failure creates a non-image review entry; it never records attendance.</p><button className="btn-primary" onClick={saveBiometricRuntime}>Save recognition controls</button></section>}

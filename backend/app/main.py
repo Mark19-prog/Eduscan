@@ -15,7 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from .auth import create_token, current_user, hash_password, require_roles, seed_users, verify_password
 from .config import settings
@@ -58,7 +58,7 @@ from .schemas_grading import (
 )
 from .services.reports import (
     attendance_report_html, generate_attendance_range_xlsx, generate_grade_report_xlsx,
-    grade_report_html, register_report,
+    grade_report_html, register_report, generate_gradebook_report_xlsx, gradebook_report_html
 )
 from .services.retention import execute_retention, public_preview, retention_policy, retention_preview
 from .services.settings_store import get_json, get_secret, set_json, set_secret
@@ -2419,6 +2419,44 @@ def list_adjustments_endpoint(
     } for r in reqs]
 
 
+@app.get("/api/admin/grade-adjustments")
+def list_global_adjustments_endpoint(
+    db: Session = Depends(get_db),
+    user: User = Depends(require_roles("admin", "records_officer")),
+):
+    reqs = db.scalars(
+        select(GradeAdjustmentRequest)
+        .options(
+            joinedload(GradeAdjustmentRequest.gradebook),
+            joinedload(GradeAdjustmentRequest.person),
+            joinedload(GradeAdjustmentRequest.assessment_item)
+        )
+        .order_by(GradeAdjustmentRequest.created_at.desc())
+    ).all()
+    return [{
+        "id": r.id,
+        "gradebook_id": r.gradebook_id,
+        "grade_name": r.gradebook.grade_name if r.gradebook else None,
+        "section_name": r.gradebook.section_name if r.gradebook else None,
+        "subject_name": r.gradebook.subject_name if r.gradebook else None,
+        "person_id": r.person_id,
+        "person_name": r.person.full_name if r.person else None,
+        "assessment_item_id": r.assessment_item_id,
+        "assessment_label": r.assessment_item.label if r.assessment_item else None,
+        "old_score": r.old_score,
+        "old_status": r.old_status,
+        "new_score": r.new_score,
+        "new_status": r.new_status,
+        "reason": r.reason,
+        "requested_by_name": r.requested_by_name,
+        "status": r.status,
+        "reviewed_by_name": r.reviewed_by_name,
+        "review_note": r.review_note,
+        "reviewed_at": r.reviewed_at,
+        "created_at": r.created_at,
+    } for r in reqs]
+
+
 @app.put("/api/adjustment-requests/{request_id}")
 def review_adjustment_endpoint(
     request_id: int,
@@ -2443,7 +2481,7 @@ def gradebook_report_xlsx_new(
     book = db.get(Gradebook, gradebook_id)
     if not book:
         raise HTTPException(status_code=404, detail="Gradebook was not found")
-    path = generate_grade_report_xlsx(db, book.class_key or f"gb-{book.id}")
+    path = generate_gradebook_report_xlsx(db, book.id)
     report = register_report(db, path, "Grading Summary", {
         "gradebook_id": book.id, "grade": book.grade_name, "section": book.section_name,
         "school_year": book.school_year_name, "quarter": book.quarter, "subject": book.subject_name,
@@ -2461,7 +2499,7 @@ def gradebook_report_print_new(
     book = db.get(Gradebook, gradebook_id)
     if not book:
         raise HTTPException(status_code=404, detail="Gradebook was not found")
-    return HTMLResponse(grade_report_html(db, book.class_key or f"gb-{book.id}"))
+    return HTMLResponse(gradebook_report_html(db, book.id))
 
 
 @app.get("/api/dashboard")
@@ -2523,7 +2561,8 @@ def add_intervention(payload: InterventionPayload, db: Session = Depends(get_db)
     if not person or person.role != "Student":
         raise HTTPException(status_code=404, detail="Student was not found")
     if user.role == "teacher":
-        ensure_adviser_access(db, user, person.grade or "", person.section or "")
+        ensure_adviser_access(
+            db, user, person.grade or "", person.section or "")
     import uuid
     item = Intervention(id=str(uuid.uuid4()), person_id=person.id, intervention_type=payload.intervention_type.strip(),
                         note=payload.note.strip(), actor_user_id=user.id, actor_name=user.full_name)

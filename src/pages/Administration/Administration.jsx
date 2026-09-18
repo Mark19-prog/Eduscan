@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { AlertTriangle, ArchiveRestore, CheckCircle2, ChevronDown, Database, Download, FileUp, KeyRound, Pencil, Plus, Save, ShieldAlert, Trash2, UserCog, Users } from 'lucide-react';
 import { api, auth } from '../../api/client';
+import { useToast } from '../../contexts/ToastContext';
 
 const tabs = [['people', 'People & records'], ['accounts', 'Accounts'], ['academic', 'Academic structure'], ['roster', 'Roster import'], ['recovery', 'Backup & recovery']];
 const emptyPerson = { external_id: '', lrn: '', full_name: '', sex: 'Female', role: 'Student', grade: '', section: '', assignment: '', guardian_phone: '', enrollment_status: 'Regular', enrollment_start_date: '', enrollment_end_date: '', transfer_school: '', biometric_consent: false };
@@ -14,8 +15,7 @@ export default function Administration() {
   const [imports, setImports] = useState([]);
   const [disposals, setDisposals] = useState([]);
   const [backups, setBackups] = useState([]);
-  const [notice, setNotice] = useState('');
-  const [error, setError] = useState('');
+  const { showSuccess, showError } = useToast();
 
   const load = useCallback(async () => {
     try {
@@ -25,17 +25,14 @@ export default function Administration() {
       ]);
       setPeople(personRows); setUsers(accountRows); setStructure(academicRows);
       setImports(importRows); setDisposals(disposalRows); setBackups(backupRows);
-    } catch (err) { setError(err.message); }
-  }, []);
+    } catch (err) { showError(err.message); }
+  }, [showError]);
 
   useEffect(() => { load(); }, [load]);
-  const success = (message) => { setNotice(message); setError(''); window.setTimeout(() => setNotice(''), 4000); };
-  const fail = (err) => { setError(err.message); setNotice(''); };
+  const success = (message) => { showSuccess(message); };
+  const fail = (err) => { showError(err.message); };
 
   return <div className="page-stack">
-    <div className="page-heading"><div><p className="eyebrow">Authorized administration</p><h1>School data administration</h1><p>Maintain school records, user accounts, academic references, approved roster imports, and encrypted recovery packages.</p></div><Database size={34} /></div>
-    {notice && <div className="notice notice-success"><CheckCircle2 size={18} /> {notice}</div>}
-    {error && <div className="notice notice-danger"><AlertTriangle size={18} /> {error}</div>}
     <div className="setup-tabs">{tabs.map(([id, label]) => <button key={id} className={active === id ? 'active' : ''} onClick={() => setActive(id)}>{label}</button>)}</div>
     {active === 'people' && <PeopleManager people={people} disposals={disposals} reload={load} success={success} fail={fail} />}
     {active === 'accounts' && <AccountManager users={users} reload={load} success={success} fail={fail} />}

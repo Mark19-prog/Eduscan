@@ -49,7 +49,7 @@ export function calculateComponentPercentage(scores, items) {
     if (!entry || entry.status !== 'Scored') { complete = false; continue; }
     if (entry.score == null || entry.score === '') { complete = false; continue; }
     totalEarned += Number(entry.score);
-    totalPossible += Number(item.maxScore);
+    totalPossible += Number(item.max_score);
     scoredCount++;
   }
 
@@ -113,9 +113,9 @@ export function calculateWeightedGrade(componentResults) {
  * @returns {string}
  */
 export function determineStatus(reportedGrade, passingGrade = 75, allComplete = true) {
-  if (reportedGrade == null || !allComplete) return 'Incomplete';
-  if (reportedGrade >= passingGrade) return 'Passing';
-  return 'Below Passing';
+  if (reportedGrade == null || !allComplete) return 'INCOMPLETE';
+  if (reportedGrade >= passingGrade) return 'PASSED';
+  return 'FAILED';
 }
 
 /**

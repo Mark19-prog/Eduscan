@@ -1,14 +1,18 @@
 import React, { useState } from 'react';
-import { History, X, Search, User, Clock, ArrowRight, ShieldAlert, CheckCircle2, Lock, Unlock, FileEdit, Send } from 'lucide-react';
+import { X, Search } from 'lucide-react';
 
 const ACTION_CONFIG = {
-  Create: { color: 'badge-info', icon: FileEdit, label: 'Created' },
-  Save: { color: 'badge-neutral', icon: FileEdit, label: 'Saved Draft' },
-  Submit: { color: 'badge-primary', icon: Send, label: 'Submitted' },
-  Finalize: { color: 'badge-success', icon: CheckCircle2, label: 'Finalized' },
-  Lock: { color: 'badge-purple', icon: Lock, label: 'Locked' },
-  Reopen: { color: 'badge-warning', icon: Unlock, label: 'Reopened' },
-  Adjustment: { color: 'badge-cyan', icon: ShieldAlert, label: 'Adjustment' },
+  Create:              { badgeClass: 'val-badge-pass',    label: 'Created' },
+  Save:                { badgeClass: 'val-badge-neutral', label: 'Saved Draft' },
+  Submit:              { badgeClass: 'val-badge-info',    label: 'Submitted' },
+  Finalize:            { badgeClass: 'val-badge-pass',    label: 'Finalized' },
+  Lock:                { badgeClass: 'val-badge-purple',  label: 'Locked' },
+  Reopen:              { badgeClass: 'val-badge-warn',    label: 'Reopened' },
+  Adjustment:          { badgeClass: 'val-badge-info',    label: 'Adjustment' },
+  ScoreUpdate:         { badgeClass: 'val-badge-neutral', label: 'Score Update' },
+  AdjustmentApproved:  { badgeClass: 'val-badge-pass',    label: 'Adj. Approved' },
+  AdjustmentRequested: { badgeClass: 'val-badge-warn',    label: 'Adj. Requested' },
+  ScoreEntry:          { badgeClass: 'val-badge-neutral', label: 'Score Entry' },
 };
 
 export default function AuditHistory({ audit = [], onClose, onRefresh }) {
@@ -34,16 +38,11 @@ export default function AuditHistory({ audit = [], onClose, onRefresh }) {
     <div className="modal-backdrop">
       <div className="modal-card modal-lg">
         <div className="modal-header">
-          <div className="breakdown-title-group">
-            <div className="breakdown-icon-circle">
-              <History size={20} />
-            </div>
-            <div>
-              <h3>Gradebook Audit Trail</h3>
-              <p className="modal-subtitle">
-                Immutable, field-level log of all grade entries, status transitions, and adjustments.
-              </p>
-            </div>
+          <div>
+            <h3>Gradebook Audit Trail</h3>
+            <p className="modal-subtitle">
+              Immutable, field-level log of all grade entries, status transitions, and adjustments.
+            </p>
           </div>
           <button type="button" className="btn-icon" onClick={onClose} aria-label="Close audit log">
             <X size={20} />
@@ -64,16 +63,21 @@ export default function AuditHistory({ audit = [], onClose, onRefresh }) {
               />
             </div>
             <div className="audit-action-filters">
-              {actionTypes.map((action) => (
-                <button
-                  key={action}
-                  type="button"
-                  className={`pill-filter ${filterAction === action ? 'pill-filter-active' : ''}`}
-                  onClick={() => setFilterAction(action)}
-                >
-                  {action}
-                </button>
-              ))}
+              <div className="status-filter-group">
+                {actionTypes.map((action) => {
+                  const cfg = ACTION_CONFIG[action];
+                  return (
+                    <button
+                      key={action}
+                      type="button"
+                      className={`status-filter-btn${filterAction === action ? ' status-filter-active status-filter-audit' : ''}`}
+                      onClick={() => setFilterAction(action)}
+                    >
+                      {action === 'All' ? 'All' : (cfg?.label || action)}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
           </div>
 
@@ -102,11 +106,9 @@ export default function AuditHistory({ audit = [], onClose, onRefresh }) {
                 ) : (
                   filtered.map((entry) => {
                     const config = ACTION_CONFIG[entry.action] || {
-                      color: 'badge-neutral',
-                      icon: FileEdit,
+                      badgeClass: 'val-badge-neutral',
                       label: entry.action,
                     };
-                    const ActionIcon = config.icon;
                     const dateStr = entry.created_at
                       ? new Date(entry.created_at).toLocaleString('en-PH', {
                           month: 'short',
@@ -120,12 +122,10 @@ export default function AuditHistory({ audit = [], onClose, onRefresh }) {
                     return (
                       <tr key={entry.id}>
                         <td className="audit-date-cell">
-                          <Clock size={12} className="text-muted inline-icon" />
-                          <span>{dateStr}</span>
+                          <span className="audit-ts">{dateStr}</span>
                         </td>
                         <td>
-                          <span className={`tag ${config.color}`}>
-                            <ActionIcon size={12} className="mr-1" />
+                          <span className={`audit-action-badge ${config.badgeClass}`}>
                             {config.label}
                           </span>
                         </td>
@@ -154,7 +154,7 @@ export default function AuditHistory({ audit = [], onClose, onRefresh }) {
                           {entry.old_value !== null || entry.new_value !== null ? (
                             <div className="value-diff">
                               <span className="old-val">{entry.old_value ?? '—'}</span>
-                              <ArrowRight size={12} className="diff-arrow" />
+                              <span className="diff-arrow">→</span>
                               <span className="new-val">{entry.new_value ?? '—'}</span>
                             </div>
                           ) : (

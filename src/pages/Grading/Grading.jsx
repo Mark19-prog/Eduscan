@@ -9,7 +9,9 @@ import CalculationBreakdown from '../../components/Grading/CalculationBreakdown'
 import AuditHistory from '../../components/Grading/AuditHistory';
 import AdjustmentRequestsModal from '../../components/Grading/AdjustmentRequestsModal';
 import ValidationChecklist from '../../components/Grading/ValidationChecklist';
+import GlobalAdjustmentsTab from '../../components/Grading/GlobalAdjustmentsTab';
 import { Loader2, CheckCircle2, AlertCircle } from 'lucide-react';
+import { useToast } from '../../contexts/ToastContext';
 
 export default function Grading() {
   const [structure, setStructure] = useState({
@@ -32,8 +34,7 @@ export default function Grading() {
   const [fullGradebook, setFullGradebook] = useState(null);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState('');
-  const [notice, setNotice] = useState('');
+  const { showSuccess, showError } = useToast();
 
   // Unsaved score & status changes
   const [scoreEdits, setScoreEdits] = useState({});
@@ -48,6 +49,9 @@ export default function Grading() {
   const [breakdownData, setBreakdownData] = useState(null);
   const [auditList, setAuditList] = useState([]);
   const [adjustmentsList, setAdjustmentsList] = useState([]);
+
+  // Navigation State
+  const [activeTab, setActiveTab] = useState('gradebook');
 
   // 1. Initial Load: Academic Structure
   useEffect(() => {
@@ -69,13 +73,33 @@ export default function Grading() {
         const activeSubject = data.subjects?.find((s) => s.active) || data.subjects?.[0];
         if (activeSubject) setSubjectId(activeSubject.id);
       })
-      .catch((err) => setError(err.message));
-  }, []);
+      .catch((err) => showError(err.message));
+  }, [showError]);
+
 
   // Filter sections when selected grade changes
   const availableSections = useMemo(() => {
-    return (structure.sections || []).filter((s) => !gradeId || s.grade_level_id === Number(gradeId));
+    return (structure.sections || [])
+      .filter((s) => !gradeId || s.grade_level_id === Number(gradeId))
+      .sort((a, b) => a.name.localeCompare(b.name));
   }, [structure.sections, gradeId]);
+
+  const sortedSchoolYears = useMemo(() => {
+    return [...(structure.school_years || [])].sort((a, b) => b.name.localeCompare(a.name));
+  }, [structure.school_years]);
+
+  const sortedGradeLevels = useMemo(() => {
+    return [...(structure.grade_levels || [])].sort((a, b) => {
+      const numA = Number(a.name);
+      const numB = Number(b.name);
+      if (!isNaN(numA) && !isNaN(numB)) return numA - numB;
+      return a.name.localeCompare(b.name);
+    });
+  }, [structure.grade_levels]);
+
+  const sortedSubjects = useMemo(() => {
+    return [...(structure.subjects || [])].sort((a, b) => a.name.localeCompare(b.name));
+  }, [structure.subjects]);
 
   // When gradeId changes, ensure valid sectionId
   useEffect(() => {
@@ -97,8 +121,6 @@ export default function Grading() {
     if (!schoolYearId || !gradeId || !sectionId || !subjectId) return;
 
     setLoading(true);
-    setError('');
-    setNotice('');
     setScoreEdits({});
     setStatusEdits({});
     setIsDirty(false);
@@ -120,7 +142,7 @@ export default function Grading() {
       const full = await api.get(`/gradebooks/${gbId}`);
       setFullGradebook(full);
     } catch (err) {
-      setError(err.message);
+      showError(err.message);
       setFullGradebook(null);
       setGradebookId(null);
     } finally {
@@ -168,12 +190,10 @@ export default function Grading() {
   };
 
   // 4. Save Draft
-  const handleSaveDraft = async () => {
-    if (!gradebookId || !fullGradebook) return;
+  const handleSaveDraft = async (silent = false) => {
+    if (!gradebookId || !fullGradebook) return false;
 
     setSaving(true);
-    setError('');
-    setNotice('');
 
     try {
       // Format payload for /api/gradebooks/{id}/scores
@@ -193,10 +213,11 @@ export default function Grading() {
               editedStudentScores[item.id] !== undefined
                 ? editedStudentScores[item.id]
                 : student.scores?.[item.id];
-            const rawStatus =
-              editedStudentStatuses[item.id] ||
-              student.score_statuses?.[item.id] ||
-              (rawScore === '' || rawScore === undefined || rawScore === null ? 'Missing' : 'Scored');
+            const explicitStatus = editedStudentStatuses[item.id] || student.score_statuses?.[item.id];
+            const isEmptyScore = rawScore === '' || rawScore === undefined || rawScore === null;
+            const rawStatus = isEmptyScore 
+              ? (explicitStatus === 'Excused' ? 'Excused' : 'Missing') 
+              : 'Scored';
 
             studentEntries.push({
               assessment_item_id: item.id,
@@ -215,7 +236,7 @@ export default function Grading() {
         change_reason: 'Teacher saved draft gradebook updates',
       });
 
-      setNotice('Gradebook draft and student scores saved successfully.');
+      if (!silent) showSuccess('Gradebook draft and student scores saved successfully.');
       setIsDirty(false);
       setScoreEdits({});
       setStatusEdits({});
@@ -223,8 +244,11 @@ export default function Grading() {
       // Reload gradebook calculations from authority
       const refreshed = await api.get(`/gradebooks/${gradebookId}`);
       setFullGradebook(refreshed);
+      return true;
     } catch (err) {
-      setError(err.message);
+      showError(err.message);
+      if (silent) throw err;
+      return false;
     } finally {
       setSaving(false);
     }
@@ -234,14 +258,13 @@ export default function Grading() {
   const handleSaveComponents = async (updatedComponents, changeReason) => {
     if (!gradebookId) return;
     setSaving(true);
-    setError('');
     try {
       await api.put(`/gradebooks/${gradebookId}/components`, {
         components: updatedComponents,
         change_reason: changeReason,
       });
       setShowConfig(false);
-      setNotice('Assessment components and activities updated successfully.');
+      showSuccess('Assessment components and activities updated successfully.');
       // Refresh
       const refreshed = await api.get(`/gradebooks/${gradebookId}`);
       setFullGradebook(refreshed);
@@ -249,7 +272,7 @@ export default function Grading() {
       setStatusEdits({});
       setIsDirty(false);
     } catch (err) {
-      setError(err.message);
+      showError(err.message);
     } finally {
       setSaving(false);
     }
@@ -258,14 +281,17 @@ export default function Grading() {
   // 6. Workflow Transitions
   const handleSubmitGradebook = async (reason) => {
     if (!gradebookId) return;
+    if (isDirty) {
+      await handleSaveDraft(true);
+    }
     setSaving(true);
     try {
       await api.post(`/gradebooks/${gradebookId}/submit`, { reason });
-      setNotice('Gradebook submitted for administrative review.');
+      showSuccess('Gradebook submitted for administrative review.');
       const refreshed = await api.get(`/gradebooks/${gradebookId}`);
       setFullGradebook(refreshed);
     } catch (err) {
-      setError(err.message);
+      showError(err.message);
       throw err;
     } finally {
       setSaving(false);
@@ -274,14 +300,17 @@ export default function Grading() {
 
   const handleFinalizeGradebook = async (reason) => {
     if (!gradebookId) return;
+    if (isDirty) {
+      await handleSaveDraft(true);
+    }
     setSaving(true);
     try {
       await api.post(`/gradebooks/${gradebookId}/finalize`, { reason });
-      setNotice('Gradebook finalized! Quarterly grades have been officially computed.');
+      showSuccess('Gradebook finalized! Quarterly grades have been officially computed.');
       const refreshed = await api.get(`/gradebooks/${gradebookId}`);
       setFullGradebook(refreshed);
     } catch (err) {
-      setError(err.message);
+      showError(err.message);
       throw err;
     } finally {
       setSaving(false);
@@ -293,11 +322,11 @@ export default function Grading() {
     setSaving(true);
     try {
       await api.post(`/gradebooks/${gradebookId}/lock`, { reason });
-      setNotice('Gradebook locked and archived.');
+      showSuccess('Gradebook locked and archived.');
       const refreshed = await api.get(`/gradebooks/${gradebookId}`);
       setFullGradebook(refreshed);
     } catch (err) {
-      setError(err.message);
+      showError(err.message);
       throw err;
     } finally {
       setSaving(false);
@@ -309,11 +338,11 @@ export default function Grading() {
     setSaving(true);
     try {
       await api.post(`/gradebooks/${gradebookId}/reopen`, { reason });
-      setNotice('Gradebook reopened into Draft status.');
+      showSuccess('Gradebook reopened into Draft status.');
       const refreshed = await api.get(`/gradebooks/${gradebookId}`);
       setFullGradebook(refreshed);
     } catch (err) {
-      setError(err.message);
+      showError(err.message);
       throw err;
     } finally {
       setSaving(false);
@@ -328,7 +357,7 @@ export default function Grading() {
       setAuditList(data);
       setShowAudit(true);
     } catch (err) {
-      setError(err.message);
+      showError(err.message);
     }
   };
 
@@ -339,7 +368,7 @@ export default function Grading() {
       setAdjustmentsList(data);
       setShowAdjustments(true);
     } catch (err) {
-      setError(err.message);
+      showError(err.message);
     }
   };
 
@@ -350,7 +379,7 @@ export default function Grading() {
       const data = await api.get(`/gradebooks/${gradebookId}/calculation/${personId}`);
       setBreakdownData(data);
     } catch (err) {
-      setError(err.message);
+      showError(err.message);
     }
   };
 
@@ -362,7 +391,7 @@ export default function Grading() {
     try {
       await api.download(`/gradebooks/${gradebookId}/report.xlsx`, filename);
     } catch (err) {
-      setError(err.message);
+      showError(err.message);
     }
   };
 
@@ -371,227 +400,241 @@ export default function Grading() {
     try {
       await api.printHtml(`/gradebooks/${gradebookId}/report/print`);
     } catch (err) {
-      setError(err.message);
+      showError(err.message);
     }
   };
 
-  const gb = fullGradebook?.gradebook;
-  const isEditable = gb && gb.status === 'Draft' && ['admin', 'teacher'].includes(auth.role());
+  const gb = fullGradebook?.gradebook;  // Teachers edit in Draft mode. Admins are read-only.
+  const isEditable = gb && gb.status === 'Draft' && auth.role() === 'teacher';
 
   return (
     <div className="page-stack">
-      {/* Page Title & Eyebrow */}
-      <div className="page-heading">
-        <div>
-          <p className="eyebrow">DepEd K-12 Policy Compliant Assessment System</p>
-          <h1>Grading Management</h1>
-          <p>
-            Configure assessment components, input activity scores, and compute policy-compliant quarterly ratings.
-          </p>
-        </div>
+
+
+      {/* Tab Navigation */}
+      <div className="setup-tabs mb-4">
+        <button
+          className={activeTab === 'gradebook' ? 'active' : ''}
+          onClick={() => setActiveTab('gradebook')}
+        >
+          Gradebook
+        </button>
+        <button
+          className={activeTab === 'metrics' ? 'active' : ''}
+          onClick={() => setActiveTab('metrics')}
+        >
+          Class Performance Metrics
+        </button>
+        {auth.role() === 'admin' && (
+          <button
+            className={activeTab === 'adjustments' ? 'active' : ''}
+            onClick={() => setActiveTab('adjustments')}
+          >
+            Adjustment Requests
+          </button>
+        )}
       </div>
 
-      {/* Global Notices */}
-      {error && (
-        <div className="notice notice-danger">
-          <AlertCircle size={18} />
-          <span>{error}</span>
-        </div>
-      )}
-      {notice && (
-        <div className="notice notice-success">
-          <CheckCircle2 size={18} />
-          <span>{notice}</span>
-        </div>
+      {activeTab === 'adjustments' && (
+        <GlobalAdjustmentsTab />
       )}
 
-      {/* Academic Selector Bar */}
-      <section className="card-static academic-selector-card">
-        <div className="form-grid five-columns">
-          <label>
-            <span className="field-label">School Year</span>
-            <select
-              className="input-field"
-              value={schoolYearId}
-              onChange={(e) => setSchoolYearId(Number(e.target.value))}
-            >
-              {(structure.school_years || []).map((item) => (
-                <option key={item.id} value={item.id}>
-                  {item.name}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          <label>
-            <span className="field-label">Quarter</span>
-            <select
-              className="input-field"
-              value={quarter}
-              onChange={(e) => setQuarter(Number(e.target.value))}
-            >
-              {[1, 2, 3, 4].map((q) => (
-                <option key={q} value={q}>
-                  Quarter {q}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          <label>
-            <span className="field-label">Grade Level</span>
-            <select
-              className="input-field"
-              value={gradeId}
-              onChange={(e) => setGradeId(Number(e.target.value))}
-            >
-              {(structure.grade_levels || []).map((item) => (
-                <option key={item.id} value={item.id}>
-                  Grade {item.name}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          <label>
-            <span className="field-label">Section</span>
-            <select
-              className="input-field"
-              value={sectionId}
-              onChange={(e) => setSectionId(Number(e.target.value))}
-            >
-              {availableSections.map((item) => (
-                <option key={item.id} value={item.id}>
-                  {item.name}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          <label>
-            <span className="field-label">Subject</span>
-            <select
-              className="input-field"
-              value={subjectId}
-              onChange={(e) => setSubjectId(Number(e.target.value))}
-            >
-              {(structure.subjects || []).map((item) => (
-                <option key={item.id} value={item.id}>
-                  {item.name}
-                </option>
-              ))}
-            </select>
-          </label>
-        </div>
-      </section>
-
-      {/* Loading indicator */}
-      {loading && (
-        <div className="loading-state-card card-static text-center py-8">
-          <Loader2 size={32} className="spin text-primary mx-auto mb-2" />
-          <p className="text-muted">Loading gradebook and assessment records...</p>
-        </div>
-      )}
-
-      {/* Main Gradebook Workspace */}
-      {!loading && fullGradebook && (
+      {(activeTab === 'gradebook' || activeTab === 'metrics') && (
         <>
-          {/* Header Context Card */}
-          <GradebookContext
-            gradebook={fullGradebook.gradebook}
-            policyName={fullGradebook.gradebook?.policy_name}
-          />
+          {/* Academic Selector Bar */}
+          <section className="card-static compact-settings-card mt-2">
+            <div className="compact-settings-grid">
+              <label className="compact-setting-item">
+                <span className="compact-label">School Year</span>
+                <select
+                  className="compact-select"
+                  value={schoolYearId}
+                  onChange={(e) => setSchoolYearId(Number(e.target.value))}
+                >
+                  {sortedSchoolYears.map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
 
-          {/* KPI Summary & DepEd Scale Distribution */}
-          <GradebookSummary
-            statistics={fullGradebook.statistics}
-            passingGrade={fullGradebook.gradebook?.passing_grade || 75}
-          />
+              <label className="compact-setting-item">
+                <span className="compact-label">Quarter</span>
+                <select
+                  className="compact-select"
+                  value={quarter}
+                  onChange={(e) => setQuarter(Number(e.target.value))}
+                >
+                  {[1, 2, 3, 4].map((q) => (
+                    <option key={q} value={q}>
+                      Quarter {q}
+                    </option>
+                  ))}
+                </select>
+              </label>
 
-          {/* Validation Checklist Panel (when toggled) */}
-          {showValidation && (
-            <ValidationChecklist
+              <label className="compact-setting-item">
+                <span className="compact-label">Grade Level</span>
+                <select
+                  className="compact-select"
+                  value={gradeId}
+                  onChange={(e) => setGradeId(Number(e.target.value))}
+                >
+                  {sortedGradeLevels.map((item) => (
+                    <option key={item.id} value={item.id}>
+                      Grade {item.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="compact-setting-item">
+                <span className="compact-label">Section</span>
+                <select
+                  className="compact-select"
+                  value={sectionId}
+                  onChange={(e) => setSectionId(Number(e.target.value))}
+                >
+                  {availableSections.map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="compact-setting-item">
+                <span className="compact-label">Subject</span>
+                <select
+                  className="compact-select"
+                  value={subjectId}
+                  onChange={(e) => setSubjectId(Number(e.target.value))}
+                >
+                  {sortedSubjects.map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+          </section>
+
+          {/* Loading indicator */}
+          {loading && (
+            <div className="loading-state-card card-static text-center py-8">
+              <Loader2 size={32} className="spin text-primary mx-auto mb-2" />
+              <p className="text-muted">Loading gradebook and assessment records...</p>
+            </div>
+          )}
+
+          {/* Main Gradebook Workspace */}
+          {!loading && fullGradebook && (
+            <>
+              {/* Header Context Card */}
+              <GradebookContext
+                gradebook={fullGradebook.gradebook}
+                policyName={fullGradebook.gradebook?.policy_name}
+              />
+
+              {activeTab === 'metrics' && (
+                <GradebookSummary
+                  statistics={fullGradebook.statistics}
+                  passingGrade={fullGradebook.gradebook?.passing_grade || 75}
+                />
+              )}
+
+              {activeTab === 'gradebook' && (
+                <>
+                  {/* Validation Checklist Panel (when toggled) */}
+                  {showValidation && (
+                    <ValidationChecklist
+                      components={fullGradebook.components}
+                      students={fullGradebook.students}
+                      status={fullGradebook.gradebook?.status}
+                      passingGrade={fullGradebook.gradebook?.passing_grade || 75}
+                      onOpenConfig={() => setShowConfig(true)}
+                      onClose={() => setShowValidation(false)}
+                    />
+                  )}
+
+                  {/* Interactive Spreadsheet Sheet */}
+                  <GradingSheet
+                    students={fullGradebook.students}
+                    components={fullGradebook.components}
+                    scores={scoreEdits}
+                    scoreStatuses={statusEdits}
+                    passingGrade={fullGradebook.gradebook?.passing_grade || 75}
+                    transmutationTable={fullGradebook.policy?.transmutation_table}
+                    disabled={!isEditable}
+                    onScoreChange={handleScoreChange}
+                    onStatusChange={handleStatusChange}
+                    onStudentBreakdown={handleStudentBreakdown}
+                  />
+
+                  {/* Action Toolbar */}
+                  <GradebookActions
+                    gradebook={fullGradebook.gradebook}
+                    isDirty={isDirty}
+                    isSaving={saving}
+                    onSaveDraft={handleSaveDraft}
+                    onOpenConfig={() => setShowConfig(true)}
+                    onSubmit={handleSubmitGradebook}
+                    onFinalize={handleFinalizeGradebook}
+                    onLock={handleLockGradebook}
+                    onReopen={handleReopenGradebook}
+                    onOpenAudit={handleOpenAudit}
+                    onOpenAdjustments={handleOpenAdjustments}
+                    onToggleValidation={() => setShowValidation((prev) => !prev)}
+                    onExportXlsx={handleExportXlsx}
+                    onPrintReport={handlePrintReport}
+                    disabled={loading || saving}
+                  />
+                </>
+              )}
+            </>
+          )}
+
+          {/* Assessment Component Setup Modal */}
+          {showConfig && fullGradebook && (
+            <AssessmentConfig
               components={fullGradebook.components}
-              students={fullGradebook.students}
-              status={fullGradebook.gradebook?.status}
-              passingGrade={fullGradebook.gradebook?.passing_grade || 75}
-              onOpenConfig={() => setShowConfig(true)}
-              onClose={() => setShowValidation(false)}
+              onSave={handleSaveComponents}
+              onClose={() => setShowConfig(false)}
+              disabled={saving}
             />
           )}
 
-          {/* Action Toolbar */}
-          <GradebookActions
-            gradebook={fullGradebook.gradebook}
-            isDirty={isDirty}
-            isSaving={saving}
-            onSaveDraft={handleSaveDraft}
-            onOpenConfig={() => setShowConfig(true)}
-            onSubmit={handleSubmitGradebook}
-            onFinalize={handleFinalizeGradebook}
-            onLock={handleLockGradebook}
-            onReopen={handleReopenGradebook}
-            onOpenAudit={handleOpenAudit}
-            onOpenAdjustments={handleOpenAdjustments}
-            onToggleValidation={() => setShowValidation((prev) => !prev)}
-            onExportXlsx={handleExportXlsx}
-            onPrintReport={handlePrintReport}
-            disabled={loading || saving}
-          />
+          {/* Step-by-Step Calculation Breakdown Modal */}
+          {breakdownData && (
+            <CalculationBreakdown
+              breakdown={breakdownData}
+              onClose={() => setBreakdownData(null)}
+            />
+          )}
 
-          {/* Interactive Spreadsheet Sheet */}
-          <GradingSheet
-            students={fullGradebook.students}
-            components={fullGradebook.components}
-            scores={scoreEdits}
-            scoreStatuses={statusEdits}
-            passingGrade={fullGradebook.gradebook?.passing_grade || 75}
-            transmutationTable={fullGradebook.policy?.transmutation_table}
-            disabled={!isEditable}
-            onScoreChange={handleScoreChange}
-            onStatusChange={handleStatusChange}
-            onStudentBreakdown={handleStudentBreakdown}
-          />
+          {/* Audit History Log Modal */}
+          {showAudit && (
+            <AuditHistory
+              audit={auditList}
+              onClose={() => setShowAudit(false)}
+              onRefresh={handleOpenAudit}
+            />
+          )}
+
+          {/* Post-Finalization Grade Adjustment Requests Modal */}
+          {showAdjustments && fullGradebook && (
+            <AdjustmentRequestsModal
+              gradebookId={gradebookId}
+              students={fullGradebook.students}
+              components={fullGradebook.components}
+              adjustments={adjustmentsList}
+              onClose={() => setShowAdjustments(false)}
+              onRefresh={handleOpenAdjustments}
+            />
+          )}
         </>
-      )}
-
-      {/* Assessment Component Setup Modal */}
-      {showConfig && fullGradebook && (
-        <AssessmentConfig
-          components={fullGradebook.components}
-          onSave={handleSaveComponents}
-          onClose={() => setShowConfig(false)}
-          disabled={saving}
-        />
-      )}
-
-      {/* Step-by-Step Calculation Breakdown Modal */}
-      {breakdownData && (
-        <CalculationBreakdown
-          breakdown={breakdownData}
-          onClose={() => setBreakdownData(null)}
-        />
-      )}
-
-      {/* Audit History Log Modal */}
-      {showAudit && (
-        <AuditHistory
-          audit={auditList}
-          onClose={() => setShowAudit(false)}
-          onRefresh={handleOpenAudit}
-        />
-      )}
-
-      {/* Post-Finalization Grade Adjustment Requests Modal */}
-      {showAdjustments && fullGradebook && (
-        <AdjustmentRequestsModal
-          gradebookId={gradebookId}
-          students={fullGradebook.students}
-          components={fullGradebook.components}
-          adjustments={adjustmentsList}
-          onClose={() => setShowAdjustments(false)}
-          onRefresh={handleOpenAdjustments}
-        />
       )}
     </div>
   );

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { CalendarClock, CheckCircle2, Pencil, Save, Trash2 } from 'lucide-react';
 import { api, auth } from '../../api/client';
+import { useToast } from '../../contexts/ToastContext';
 
 const dayNames = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 const emptyForm = { id: null, grade: '', section: '', subject: '', weekdays: '0,1,2,3,4', start_time: '07:30', end_time: '08:30', late_grace_minutes: 15, absence_cutoff: '08:30', active: true };
@@ -9,8 +10,7 @@ export default function MySchedules() {
   const [structure, setStructure] = useState({ grade_levels: [], sections: [], subjects: [] });
   const [rows, setRows] = useState([]);
   const [form, setForm] = useState(emptyForm);
-  const [notice, setNotice] = useState('');
-  const [error, setError] = useState('');
+  const { showSuccess, showError } = useToast();
 
   const load = useCallback(async () => {
     try {
@@ -20,8 +20,8 @@ export default function MySchedules() {
       const section = references.sections.find((item) => item.active && item.grade_level_id === grade?.id);
       const subject = references.subjects.find((item) => item.active);
       setForm((current) => ({ ...current, grade: current.grade || grade?.name || '', section: current.section || section?.name || '', subject: current.subject || subject?.name || '' }));
-    } catch (err) { setError(err.message); }
-  }, []);
+    } catch (err) { showError(err.message); }
+  }, [showError]);
   useEffect(() => { load(); }, [load]);
 
   const gradeRecord = structure.grade_levels.find((item) => item.name === form.grade);
@@ -39,22 +39,19 @@ export default function MySchedules() {
   };
   const reset = () => setForm((current) => ({ ...emptyForm, grade: current.grade, section: current.section, subject: current.subject }));
   const save = async (event) => {
-    event.preventDefault(); setError('');
+    event.preventDefault();
     try {
       await api.post('/schedules', { ...form, teacher_name: auth.name() });
-      setNotice(form.id ? 'Class schedule updated.' : 'Class schedule created.'); reset(); await load();
-      window.setTimeout(() => setNotice(''), 3500);
-    } catch (err) { setError(err.message); }
+      showSuccess(form.id ? 'Class schedule updated.' : 'Class schedule created.'); reset(); await load();
+    } catch (err) { showError(err.message); }
   };
   const edit = (item) => setForm({ ...item });
   const remove = async (id) => {
-    try { await api.delete(`/schedules/${id}`); setNotice('Class schedule removed.'); reset(); await load(); }
-    catch (err) { setError(err.message); }
+    try { await api.delete(`/schedules/${id}`); showSuccess('Class schedule removed.'); reset(); await load(); }
+    catch (err) { showError(err.message); }
   };
 
   return <div className="page-stack">
-    <div className="page-heading"><div><p className="eyebrow">Assigned advisory sections</p><h1>Class schedules</h1><p>Set the class start, end, tardiness grace, and authorized absence cutoff used by automatic attendance closing.</p></div><CalendarClock size={34} /></div>
-    {notice && <div className="notice notice-success"><CheckCircle2 size={18} />{notice}</div>}{error && <div className="notice notice-danger">{error}</div>}
     <section className="card-static"><h2>{form.id ? 'Edit schedule' : 'Add schedule'}</h2>{structure.sections.length === 0 && <div className="notice notice-warning">No section is assigned to this teacher account. Ask an administrator to assign the adviser account under Administration → Academic structure.</div>}<form onSubmit={save}><div className="form-grid three-columns">
       <label><span className="field-label">Grade level</span><select className="input-field" value={form.grade} onChange={(event) => changeGrade(event.target.value)}>{structure.grade_levels.filter((item) => item.active).map((item) => <option key={item.id}>{item.name}</option>)}</select></label>
       <label><span className="field-label">Section</span><select className="input-field" value={form.section} onChange={(event) => patch('section', event.target.value)}>{sections.map((item) => <option key={item.id}>{item.name}</option>)}</select></label>

@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useRef } from 'react';
-import { Search, Filter, HelpCircle, AlertCircle, Calculator, ChevronDown, Check, ArrowUpDown } from 'lucide-react';
+import { Search, Filter, HelpCircle, AlertCircle, Calculator, ChevronDown, Check, ArrowUpDown, UserX } from 'lucide-react';
 import { calculateStudentGrade } from '../../services/gradingCalculations';
+import { useToast } from '../../contexts/ToastContext';
 
 export default function GradingSheet({
   students = [],
@@ -14,6 +15,7 @@ export default function GradingSheet({
   onStatusChange,
   onStudentBreakdown,
 }) {
+  const { showError } = useToast();
   const [search, setSearch] = useState('');
   const [filterStatus, setFilterStatus] = useState('All'); // 'All' | 'Passing' | 'Below Passing' | 'Incomplete'
   const [sortBy, setSortBy] = useState('name'); // 'name' | 'grade'
@@ -40,11 +42,16 @@ export default function GradingSheet({
       const studentScoreMap = scores[studentIdStr] || {};
       const studentStatusMap = scoreStatuses[studentIdStr] || {};
 
-      const formattedScores = flatItems.map((item) => ({
-        itemId: item.id,
-        score: studentScoreMap[item.id] !== undefined ? studentScoreMap[item.id] : student.scores?.[item.id],
-        status: studentStatusMap[item.id] || student.score_statuses?.[item.id] || 'Scored',
-      }));
+      const formattedScores = flatItems.map((item) => {
+        const val = studentScoreMap[item.id] !== undefined ? studentScoreMap[item.id] : (student.scores?.[item.id] ?? '');
+        const explicitStat = studentStatusMap[item.id] || student.score_statuses?.[item.id];
+        const stat = (val === '') ? (explicitStat === 'Excused' ? 'Excused' : 'Missing') : 'Scored';
+        return {
+          itemId: item.id,
+          score: val,
+          status: stat,
+        };
+      });
 
       const calc = calculateStudentGrade({
         studentScores: formattedScores,
@@ -66,9 +73,9 @@ export default function GradingSheet({
   // Filter and Sort
   const displayedStudents = useMemo(() => {
     let list = computedStudents.filter((s) => {
-      if (filterStatus === 'Passing' && s.calc.status !== 'Passing') return false;
-      if (filterStatus === 'Below Passing' && s.calc.status !== 'Below Passing') return false;
-      if (filterStatus === 'Incomplete' && s.calc.status !== 'Incomplete') return false;
+      if (filterStatus === 'PASSED' && s.calc.status !== 'PASSED') return false;
+      if (filterStatus === 'FAILED' && s.calc.status !== 'FAILED') return false;
+      if (filterStatus === 'INCOMPLETE' && s.calc.status !== 'INCOMPLETE') return false;
 
       if (!search.trim()) return true;
       const term = search.toLowerCase();
@@ -90,6 +97,13 @@ export default function GradingSheet({
 
   // Keyboard navigation handler
   const handleKeyDown = (e, rowIdx, colIdx) => {
+    // Prevent typing letters and symbols (allow only numbers, backspace, arrows, etc.)
+    if (e.key.length === 1 && !/^[0-9.]$/.test(e.key)) {
+      e.preventDefault();
+      showError("Please enter a valid number. Letters and symbols are not allowed.");
+      return;
+    }
+
     let nextRow = rowIdx;
     let nextCol = colIdx;
 
@@ -149,33 +163,34 @@ export default function GradingSheet({
             </button>
             <button
               type="button"
-              className={`pill-filter ${filterStatus === 'Passing' ? 'pill-filter-active' : ''}`}
-              onClick={() => setFilterStatus('Passing')}
+              className={`pill-filter ${filterStatus === 'PASSED' ? 'pill-filter-active' : ''}`}
+              onClick={() => setFilterStatus('PASSED')}
             >
-              Passing
+              Passed
             </button>
             <button
               type="button"
-              className={`pill-filter ${filterStatus === 'Below Passing' ? 'pill-filter-active' : ''}`}
-              onClick={() => setFilterStatus('Below Passing')}
+              className={`pill-filter ${filterStatus === 'FAILED' ? 'pill-filter-active' : ''}`}
+              onClick={() => setFilterStatus('FAILED')}
             >
-              Below Passing
+              Failed
             </button>
             <button
               type="button"
-              className={`pill-filter ${filterStatus === 'Incomplete' ? 'pill-filter-active' : ''}`}
-              onClick={() => setFilterStatus('Incomplete')}
+              className={`pill-filter ${filterStatus === 'INCOMPLETE' ? 'pill-filter-active' : ''}`}
+              onClick={() => setFilterStatus('INCOMPLETE')}
             >
               Incomplete
             </button>
 
             <button
               type="button"
-              className="btn-link-action ml-2"
+              className="btn btn-secondary btn-sm ml-2"
               title="Toggle Sort Order"
               onClick={() => setSortBy((cur) => (cur === 'name' ? 'grade' : 'name'))}
+              style={{ marginTop: '3px' }}
             >
-              <ArrowUpDown size={14} /> Sort: {sortBy === 'name' ? 'Name (A-Z)' : 'Grade (High-Low)'}
+              <ArrowUpDown size={14} /> {sortBy === 'name' ? 'Sort: Name (A-Z)' : 'Sort: Grade (High-Low)'}
             </button>
           </div>
         </div>
@@ -256,8 +271,8 @@ export default function GradingSheet({
               </tr>
             ) : (
               displayedStudents.map((student, rowIdx) => {
-                const isPassing = student.calc.status === 'Passing';
-                const isIncomplete = student.calc.status === 'Incomplete';
+                const isPassing = student.calc.status === 'PASSED';
+                const isIncomplete = student.calc.status === 'INCOMPLETE';
                 let colCounter = 0;
 
                 return (
@@ -296,10 +311,10 @@ export default function GradingSheet({
                           student.liveScores[item.id] !== undefined
                             ? student.liveScores[item.id]
                             : student.scores?.[item.id] ?? '';
-                        const currentStatus =
-                          student.liveStatuses[item.id] ||
-                          student.score_statuses?.[item.id] ||
-                          (currentVal === '' ? 'Missing' : 'Scored');
+                        const explicitStatus = student.liveStatuses[item.id] || student.score_statuses?.[item.id];
+                        const currentStatus = (currentVal === '') 
+                          ? (explicitStatus === 'Excused' ? 'Excused' : 'Missing') 
+                          : 'Scored';
 
                         const isScored = currentStatus === 'Scored';
                         const isOverMax = isScored && Number(currentVal) > item.max_score;
@@ -322,9 +337,9 @@ export default function GradingSheet({
                                 min="0"
                                 max={item.max_score}
                                 className={`score-input font-mono ${hasError ? 'input-error' : ''}`}
-                                disabled={disabled || !isScored}
+                                disabled={disabled}
                                 value={currentVal}
-                                placeholder={!isScored ? currentStatus : '—'}
+                                placeholder="—"
                                 onChange={(e) =>
                                   onScoreChange?.(student.person_id, item.id, e.target.value)
                                 }
@@ -336,21 +351,11 @@ export default function GradingSheet({
                                 }
                               />
 
-                              {/* Mini Status Pill / Selector */}
-                              {!disabled && (
-                                <select
-                                  className="score-status-mini-select"
-                                  value={currentStatus}
-                                  onChange={(e) =>
-                                    onStatusChange?.(student.person_id, item.id, e.target.value)
-                                  }
-                                  title="Change score status (Scored, Missing, Excused, Incomplete)"
-                                >
-                                  <option value="Scored">Scored</option>
-                                  <option value="Missing">Missing</option>
-                                  <option value="Excused">Excused</option>
-                                  <option value="Incomplete">Incomplete</option>
-                                </select>
+                              {/* Missing Status Indicator */}
+                              {!isScored && (
+                                <div style={{ color: '#ef4444', fontSize: '10px', fontWeight: 'bold', letterSpacing: '0.05em', marginTop: '4px', textTransform: 'uppercase', textAlign: 'center' }}>
+                                  {currentStatus}
+                                </div>
                               )}
                             </div>
                           </td>

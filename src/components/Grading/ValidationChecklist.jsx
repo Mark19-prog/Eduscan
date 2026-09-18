@@ -1,5 +1,5 @@
 import React from 'react';
-import { CheckCircle2, AlertTriangle, XCircle, ShieldCheck, Wrench, X } from 'lucide-react';
+import { CheckCircle2, AlertTriangle, XCircle, ShieldCheck, X } from 'lucide-react';
 
 export default function ValidationChecklist({
   components = [],
@@ -84,50 +84,36 @@ export default function ValidationChecklist({
             <AlertTriangle size={18} />
             <span><strong>Ready for Draft/Review:</strong> Partial scores exist. All scores must be entered before Finalization.</span>
           </div>
-        ) : (
-          <div className="notice notice-success compact-notice">
-            <ShieldCheck size={18} />
-            <span><strong>Fully Compliant:</strong> Gradebook satisfies all DepEd validation criteria and is ready for Finalization.</span>
-          </div>
-        )}
+        ) : null}
       </div>
 
       <div className="validation-items-list">
         {checks.map((check) => {
-          let Icon = CheckCircle2;
-          let iconClass = 'text-success';
-          let itemClass = 'validation-item-pass';
-
-          if (check.status === 'error') {
-            Icon = XCircle;
-            iconClass = 'text-danger';
-            itemClass = 'validation-item-error';
-          } else if (check.status === 'warn') {
-            Icon = AlertTriangle;
-            iconClass = 'text-warning';
-            itemClass = 'validation-item-warn';
-          }
+          const statusMeta = {
+            pass: { label: 'Pass', barClass: 'val-bar-pass' },
+            warn: { label: 'Warning', barClass: 'val-bar-warn' },
+            error: { label: 'Error', barClass: 'val-bar-error' },
+          }[check.status];
 
           return (
-            <div key={check.id} className={`validation-item ${itemClass}`}>
-              <div className="validation-item-icon">
-                <Icon size={20} className={iconClass} />
-              </div>
+            <div key={check.id} className={`validation-item validation-item-${check.status}`}>
+              <div className={`validation-status-bar ${statusMeta.barClass}`} />
               <div className="validation-item-content">
                 <div className="validation-item-header">
                   <strong>{check.title}</strong>
-                  {check.action && (
-                    <button
-                      type="button"
-                      className="btn-link-action"
-                      onClick={check.action.onClick}
-                    >
-                      <Wrench size={14} /> {check.action.label}
-                    </button>
-                  )}
+                  <span className={`val-status-badge val-badge-${check.status}`}>{statusMeta.label}</span>
                 </div>
                 <p className="validation-item-desc">{check.description}</p>
                 {check.hint && <p className="validation-item-hint">{check.hint}</p>}
+                {check.action && (
+                  <button
+                    type="button"
+                    className="val-action-btn"
+                    onClick={check.action.onClick}
+                  >
+                    {check.action.label} →
+                  </button>
+                )}
               </div>
             </div>
           );

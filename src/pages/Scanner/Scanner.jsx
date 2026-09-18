@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { AlertTriangle, Camera, CheckCircle2, Clock3, KeyRound, LogOut, Maximize2, MessageSquareText, Minimize2, RefreshCw, ScanFace, UserPlus } from 'lucide-react';
+import { AlertTriangle, Camera, CheckCircle2, Clock3, KeyRound, LayoutDashboard, LogOut, Maximize2, MessageSquareText, Minimize2, RefreshCw, ScanFace, UserPlus } from 'lucide-react';
 import { api, auth, captureVideoFrame, displayTime, localDate } from '../../api/client';
 import StudentRegistrationModal from '../../components/Scanner/StudentRegistrationModal';
 
@@ -119,7 +119,12 @@ export default function Scanner() {
       <header className="scanner-header">
         <div className="brand-lockup"><img src="/logo.png" alt="San Jose National High School logo" /><div><h2>EduScan Gate Station</h2><span>San Jose National High School · local biometric station</span></div></div>
         <div className="action-row">
-          {auth.role() === 'admin' && <button className="btn-secondary" onClick={() => setRegistrationOpen(true)}><UserPlus size={16} /> Enroll person</button>}
+          {auth.role() === 'admin' && (
+            <>
+              <button className="btn-secondary" onClick={() => window.location.href = '/dashboard'}><LayoutDashboard size={16} /> Dashboard</button>
+              <button className="btn-secondary" onClick={() => setRegistrationOpen(true)}><UserPlus size={16} /> Enroll person</button>
+            </>
+          )}
           <button className="icon-btn" title="Account security" aria-label="Account security" onClick={() => { window.location.href = '/account/security'; }}><KeyRound size={18} /></button>
           <div className="scanner-state"><span className={`status-dot ${scanning ? '' : 'warning-dot'}`} /> {scanning ? 'RECOGNITION ACTIVE' : cameraOn ? 'CAMERA READY' : 'CAMERA OFF'}</div>
           <button className="icon-btn" onClick={logout} title="Sign out"><LogOut size={18} /></button>

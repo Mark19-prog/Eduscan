@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { AlertTriangle, ChevronDown, Download, FileSpreadsheet, ShieldCheck, Upload } from 'lucide-react';
 import { api, auth, localDate } from '../../api/client';
+import { useToast } from '../../contexts/ToastContext';
 
 export default function SF2ReportGenerator() {
   const [month, setMonth] = useState(localDate().slice(0, 7));
@@ -12,15 +13,14 @@ export default function SF2ReportGenerator() {
   const [students, setStudents] = useState([]);
   const [todayRows, setTodayRows] = useState([]);
   const [template, setTemplate] = useState({ configured: false });
-  const [notice, setNotice] = useState('');
-  const [error, setError] = useState('');
+  const { showSuccess, showError } = useToast();
 
   useEffect(() => {
     Promise.all([api.get('/my/advisory-sections'), api.get('/sf2/template')]).then(([sections, status]) => {
       setAvailableSections(sections); setTemplate(status);
       if (sections.length) { setGrade(sections[0].grade); setSection(sections[0].section); }
-    }).catch((err) => setError(err.message));
-  }, []);
+    }).catch((err) => showError(err.message));
+  }, [showError]);
 
   const load = useCallback(async () => {
     if (!grade || !section) { setStudents([]); setTodayRows([]); return; }
@@ -28,8 +28,8 @@ export default function SF2ReportGenerator() {
       const query = `grade=${encodeURIComponent(grade)}&section=${encodeURIComponent(section)}`;
       const [people, attendance] = await Promise.all([api.get(`/persons?role=Student&${query}`), api.get(`/attendance?date=${localDate()}&${query}`)]);
       setStudents(people); setTodayRows(attendance);
-    } catch (err) { setError(err.message); }
-  }, [grade, section]);
+    } catch (err) { showError(err.message); }
+  }, [grade, section, showError]);
   useEffect(() => { load(); }, [load]);
 
   const male = students.filter((student) => student.sex === 'Male').length;
@@ -44,24 +44,23 @@ export default function SF2ReportGenerator() {
   const upload = async (event) => {
     const file = event.target.files?.[0]; if (!file) return;
     const form = new FormData(); form.append('file', file);
-    try { await api.post('/sf2/template', form); setTemplate({ configured: true, filename: file.name }); setNotice('Official SF2 template uploaded and validated.'); }
-    catch (err) { setError(err.message); }
+    try { await api.post('/sf2/template', form); setTemplate({ configured: true, filename: file.name }); showSuccess('Official SF2 template uploaded and validated.'); }
+    catch (err) { showError(err.message); }
   };
   const downloadTemporaryLog = () => {
     const query = new URLSearchParams({ date: localDate(), grade, section });
-    api.download(`/attendance/temporary-log?${query}`, `attendance-${localDate()}-Grade-${grade}-${section}.xlsx`).catch((err) => setError(err.message));
+    api.download(`/attendance/temporary-log?${query}`, `attendance-${localDate()}-Grade-${grade}-${section}.xlsx`).catch((err) => showError(err.message));
   };
   const exportFile = async () => {
     const [year, monthNumber] = month.split('-').map(Number);
     const query = new URLSearchParams({ year, month: monthNumber, grade, section, school_id: schoolId, school_year: schoolYear, school_name: 'SAN JOSE NATIONAL HIGH SCHOOL' });
-    try { await api.download(`/sf2/export?${query}`, `SF2-${month}-${grade}-${section}.xlsx`); setNotice('SF2 workbook generated. The records officer must verify it before submission.'); }
-    catch (err) { setError(err.message); }
+    try { await api.download(`/sf2/export?${query}`, `SF2-${month}-${grade}-${section}.xlsx`); showSuccess('SF2 workbook generated. The records officer must verify it before submission.'); }
+    catch (err) { showError(err.message); }
   };
 
   return <div className="page-stack">
     <section className="card-static">
       <div className="section-heading"><div><p className="eyebrow">Official XLSX generation</p><h2>SF2 monthly attendance report</h2><p className="section-copy">Select one adviser section. Learners are deduplicated by ID/LRN, alphabetized within the male/female blocks, and transfer remarks are written into the official remarks field.</p></div><FileSpreadsheet size={28} /></div>
-      {error && <div className="notice notice-danger"><AlertTriangle size={18} /> {error}</div>}{notice && <div className="notice notice-success"><ShieldCheck size={18} /> {notice}</div>}
       {availableSections.length === 0 && <div className="notice notice-warning">No active section is available. Administrators must create a grade/section and assign an adviser account before teachers can export records.</div>}
       <div className="form-grid three-columns">
         <label><span className="field-label">Reporting month</span><input className="input-field" type="month" value={month} onChange={(event) => setMonth(event.target.value)} /></label>

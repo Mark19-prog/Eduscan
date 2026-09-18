@@ -113,6 +113,70 @@ def grade_report_html(db: Session, class_key: str) -> str:
     )
 
 
+def generate_gradebook_report_xlsx(db: Session, gradebook_id: int) -> Path:
+    from .grading import get_gradebook_full
+    full = get_gradebook_full(db, gradebook_id)
+    if not full:
+        raise HTTPException(status_code=404, detail="Gradebook not found")
+        
+    gb = full["gradebook"]
+    rows = full["students"]
+    statistics = full["statistics"]
+    
+    book = Workbook()
+    sheet = book.active
+    sheet.title = "Grade Summary"
+    labels = ["LRN / ID", "Learner", "Initial Grade", "Transmuted Grade", "Result", "Completion"]
+    _title(sheet, "EDUSCAN GRADING SUMMARY", f"SY {gb['school_year_name']} · Quarter {gb['quarter']} · {gb['subject_name']} · Grade {gb['grade_name']} {gb['section_name']}", len(labels))
+    _headers(sheet, 4, labels)
+    for row_number, item in enumerate(rows, 5):
+        values = [item["lrn"] or item["external_id"], item["full_name"], item["initial_grade"], item["reported_grade"], item["status"], "Complete" if item["complete"] else "Incomplete"]
+        for column, value in enumerate(values, 1):
+            sheet.cell(row_number, column, value)
+            
+    stats_row = len(rows) + 7
+    sheet.cell(stats_row, 1, "CLASS STATISTICS").font = Font(bold=True)
+    stats = [("Learners", statistics["learners"]), ("Complete", statistics["complete"]), ("Incomplete", statistics["incomplete"]),
+             ("Passed", statistics["passed"]), ("Below rule", statistics["below_passing"]), ("Average", statistics["average"]),
+             ("Highest", statistics["highest"]), ("Lowest", statistics["lowest"])]
+    for index, (label, value) in enumerate(stats, stats_row + 1):
+        sheet.cell(index, 1, label).font = Font(bold=True)
+        sheet.cell(index, 2, value)
+        
+    sheet.freeze_panes = "A5"
+    for column, width in {"A": 20, "B": 34, "C": 16, "D": 18, "E": 16, "F": 14}.items():
+        sheet.column_dimensions[column].width = width
+    target = EXPORT_DIR / f"Grade-Summary-{_safe_name(gb['school_year_name'])}-Q{gb['quarter']}-{_safe_name(gb['grade_name'])}-{_safe_name(gb['section_name'])}-{_safe_name(gb['subject_name'])}.xlsx"
+    book.save(target)
+    return target
+
+
+def gradebook_report_html(db: Session, gradebook_id: int) -> str:
+    from .grading import get_gradebook_full
+    full = get_gradebook_full(db, gradebook_id)
+    if not full:
+        raise HTTPException(status_code=404, detail="Gradebook not found")
+        
+    gb = full["gradebook"]
+    rows = full["students"]
+    statistics = full["statistics"]
+    
+    body = "".join(
+        f"<tr><td>{html.escape(item['lrn'] or item['external_id'])}</td><td>{html.escape(item['full_name'])}</td>"
+        f"<td>{item['initial_grade'] if item['initial_grade'] is not None else '—'}</td><td>{item['reported_grade'] if item['reported_grade'] is not None else '—'}</td>"
+        f"<td>{html.escape(item['status'])}</td></tr>" for item in rows
+    )
+    return _printable_html(
+        "EduScan Grading Summary",
+        f"SY {gb['school_year_name']} · Quarter {gb['quarter']} · {gb['subject_name']} · Grade {gb['grade_name']} {gb['section_name']}",
+        "<table><thead><tr><th>LRN / ID</th><th>Learner</th><th>Initial</th><th>Transmuted</th><th>Result</th></tr></thead><tbody>" + body + "</tbody></table>"
+        f"<h2>Class statistics</h2><p>Learners: {statistics['learners']} · Complete: {statistics['complete']} · Incomplete: {statistics['incomplete']} · "
+        f"Passed: {statistics['passed']} · Below rule: {statistics['below_passing']} · Average: {statistics['average'] if statistics['average'] is not None else '—'} · "
+        f"Highest: {statistics['highest'] if statistics['highest'] is not None else '—'} · Lowest: {statistics['lowest'] if statistics['lowest'] is not None else '—'}</p>",
+    )
+
+
+
 def attendance_range_rows(db: Session, starts_on: date, ends_on: date, role: str | None = None,
                           grade: str | None = None, section: str | None = None,
                           person_id: int | None = None) -> list[dict]:

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { CheckCircle2, ChevronDown, Clock3, Download, Eraser, FileEdit, MessageSquareText, ShieldCheck, X } from 'lucide-react';
 import { api, auth, displayTime, localDate } from '../../api/client';
+import { useToast } from '../../contexts/ToastContext';
 
 const statusColor = {
   Present: 'var(--success)', Late: '#b45309', Absent: 'var(--danger)', 'No scan': 'var(--text-muted)',
@@ -17,8 +18,7 @@ export default function Attendance() {
   const [outboxCount, setOutboxCount] = useState(0);
   const [editing, setEditing] = useState(null);
   const [resetting, setResetting] = useState(false);
-  const [notice, setNotice] = useState('');
-  const [error, setError] = useState('');
+  const { showSuccess, showError } = useToast();
   const [roleFilter, setRoleFilter] = useState('All');
 
   const selectedSection = useMemo(() => sections.find((item) => `${item.grade}|${item.section}` === sectionKey), [sections, sectionKey]);
@@ -28,42 +28,39 @@ export default function Attendance() {
     api.get('/my/advisory-sections').then((items) => {
       setSections(items);
       if (auth.role() === 'teacher' && items.length) setSectionKey(`${items[0].grade}|${items[0].section}`);
-    }).catch((err) => setError(err.message));
-  }, []);
+    }).catch((err) => showError(err.message));
+  }, [showError]);
 
   const load = useCallback(async () => {
-    setError('');
     try {
       const requests = [api.get(`/attendance?date=${date}${sectionQuery}`), api.get('/attendance/corrections')];
       if (auth.role() === 'admin') requests.push(api.get('/sms/outbox'), api.get('/attendance/resets'));
       const [attendance, audit, outbox = [], resetRows = []] = await Promise.all(requests);
       setRows(attendance); setCorrections(audit); setOutboxCount(outbox.length); setResets(resetRows);
-    } catch (err) { setError(err.message); }
-  }, [date, sectionQuery]);
+    } catch (err) { showError(err.message); }
+  }, [date, sectionQuery, showError]);
   useEffect(() => { load(); }, [load]);
 
   const filtered = roleFilter === 'All' ? rows : rows.filter((row) => row.role === roleFilter);
   const counts = rows.reduce((result, row) => ({ ...result, [row.status]: (result[row.status] || 0) + 1 }), {});
   const downloadLog = () => {
-    if (auth.role() === 'teacher' && !selectedSection) return setError('Ask the administrator to assign your adviser account to a section first.');
+    if (auth.role() === 'teacher' && !selectedSection) return showError('Ask the administrator to assign your adviser account to a section first.');
     const query = new URLSearchParams({ date });
     if (selectedSection) { query.set('grade', selectedSection.grade); query.set('section', selectedSection.section); }
     const scope = selectedSection ? `Grade-${selectedSection.grade}-${selectedSection.section}` : 'All-School';
-    api.download(`/attendance/temporary-log?${query}`, `attendance-${date}-${scope}.xlsx`).catch((err) => setError(err.message));
+    api.download(`/attendance/temporary-log?${query}`, `attendance-${date}-${scope}.xlsx`).catch((err) => showError(err.message));
   };
   const handleClose = async () => {
-    if (auth.role() === 'teacher' && !selectedSection) return setError('Select your assigned section before closing attendance.');
+    if (auth.role() === 'teacher' && !selectedSection) return showError('Select your assigned section before closing attendance.');
     try {
       const result = await api.post(`/attendance/close?date=${date}${sectionQuery}`, {});
-      setNotice(`${result.created} absence record(s) created. Applicable guardian SMS notices were processed.`); await load();
-    } catch (err) { setError(err.message); }
+      showSuccess(`${result.created} absence record(s) created. Applicable guardian SMS notices were processed.`); await load();
+    } catch (err) { showError(err.message); }
   };
 
   return <div className="page-stack">
-    <div className="page-heading"><div><p className="eyebrow">Persistent gate attendance register</p><h1>Attendance review</h1><p>Review the school-wide gate log or an adviser section, then correct only the records that need attention.</p></div><button className="btn-primary" onClick={downloadLog}><Download size={17} /> Download current log</button></div>
+    <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '1rem' }}><button className="btn-primary" onClick={downloadLog}><Download size={17} /> Download current log</button></div>
     <div className="notice notice-blue"><ShieldCheck size={19} /><div><strong>One row per unique student ID or LRN.</strong> The all-school file includes every active record; adviser downloads are filtered by section and alphabetized. Raw scans and clean-slate actions remain auditable.</div></div>
-    {notice && <div className="notice notice-success"><CheckCircle2 size={19} /> {notice}</div>}
-    {error && <div className="notice notice-danger">{error}</div>}
 
     <div className="metric-grid compact-grid">{[['Present', counts.Present || 0], ['Late', counts.Late || 0], ['Absent', counts.Absent || 0], ['Pending / no scan', counts['No scan'] || 0]].map(([label, value]) => <div className="metric-card" key={label}><span>{label}</span><strong>{value}</strong></div>)}</div>
 
@@ -87,8 +84,8 @@ export default function Attendance() {
       {corrections.map((item) => <tr key={item.id}><td>{new Date(item.created_at).toLocaleString('en-PH')}</td><td>{item.person_name}</td><td>{item.actor_name} · {item.actor_role}</td><td>{item.before.status} · {displayTime(item.before.time_in)} / {displayTime(item.before.time_out)}</td><td>{item.status} · {displayTime(item.time_in)} / {displayTime(item.time_out)}</td><td>{item.reason}</td></tr>)}
     </tbody></table></div></details>
     {auth.role() === 'admin' && <details className="card-static disclosure-card"><summary>Clean-slate audit ({resets.length})</summary><div className="table-scroll"><table className="interactive-table"><thead><tr><th>Reset time</th><th>Attendance date</th><th>Actor</th><th>Superseded records</th><th>Reason</th></tr></thead><tbody>{resets.length === 0 && <tr><td colSpan="5" className="empty-cell">No attendance day has been reset.</td></tr>}{resets.map((item) => <tr key={item.id}><td>{new Date(item.created_at).toLocaleString('en-PH')}</td><td>{item.attendance_date}</td><td>{item.actor_name}</td><td>{item.superseded_event_count} scans, {item.superseded_correction_count} corrections</td><td>{item.reason}</td></tr>)}</tbody></table></div></details>}
-    {editing && <CorrectionModal row={editing} date={date} onClose={() => setEditing(null)} onSaved={async () => { setEditing(null); setNotice('Attendance correction saved with an audit entry.'); await load(); }} />}
-    {resetting && <ResetDayModal date={date} onClose={() => setResetting(false)} onSaved={async (result) => { setResetting(false); setNotice(`Clean slate started. ${result.superseded_event_count} scan event(s) and ${result.superseded_correction_count} correction(s) were superseded, not silently erased.`); await load(); }} />}
+    {editing && <CorrectionModal row={editing} date={date} onClose={() => setEditing(null)} onSaved={async () => { setEditing(null); showSuccess('Attendance correction saved with an audit entry.'); await load(); }} />}
+    {resetting && <ResetDayModal date={date} onClose={() => setResetting(false)} onSaved={async (result) => { setResetting(false); showSuccess(`Clean slate started. ${result.superseded_event_count} scan event(s) and ${result.superseded_correction_count} correction(s) were superseded, not silently erased.`); await load(); }} />}
   </div>;
 }
 

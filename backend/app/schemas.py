@@ -6,14 +6,16 @@ import re
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-USER_ROLES = {"admin", "teacher", "scanner", "records_officer", "privacy_officer", "ict"}
+USER_ROLES = {"admin", "teacher", "scanner",
+              "records_officer", "privacy_officer", "ict"}
 
 
 def strong_password(value: str) -> str:
     if len(value) < 12:
         raise ValueError("Password must contain at least 12 characters")
     if not re.search(r"[A-Z]", value) or not re.search(r"[a-z]", value):
-        raise ValueError("Password must contain uppercase and lowercase letters")
+        raise ValueError(
+            "Password must contain uppercase and lowercase letters")
     if not re.search(r"\d", value) or not re.search(r"[^A-Za-z0-9]", value):
         raise ValueError("Password must contain a number and a symbol")
     return value
@@ -44,7 +46,8 @@ class UserPublic(BaseModel):
 
 
 class UserCreate(BaseModel):
-    username: str = Field(min_length=3, max_length=80, pattern=r"^[A-Za-z0-9._-]+$")
+    username: str = Field(min_length=3, max_length=80,
+                          pattern=r"^[A-Za-z0-9._-]+$")
     password: str = Field(min_length=12, max_length=200)
     role: str
     full_name: str = Field(min_length=3, max_length=160)
@@ -56,7 +59,8 @@ class UserCreate(BaseModel):
     @classmethod
     def valid_user_role(cls, value: str) -> str:
         if value not in USER_ROLES:
-            raise ValueError(f"Role must be one of: {', '.join(sorted(USER_ROLES))}")
+            raise ValueError(
+                f"Role must be one of: {', '.join(sorted(USER_ROLES))}")
         return value
 
 
@@ -64,7 +68,8 @@ class UserUpdate(BaseModel):
     role: str
     full_name: str = Field(min_length=3, max_length=160)
     active: bool = True
-    new_password: str | None = Field(default=None, min_length=12, max_length=200)
+    new_password: str | None = Field(
+        default=None, min_length=12, max_length=200)
 
     @field_validator("new_password")
     @classmethod
@@ -75,7 +80,8 @@ class UserUpdate(BaseModel):
     @classmethod
     def valid_user_role(cls, value: str) -> str:
         if value not in USER_ROLES:
-            raise ValueError(f"Role must be one of: {', '.join(sorted(USER_ROLES))}")
+            raise ValueError(
+                f"Role must be one of: {', '.join(sorted(USER_ROLES))}")
         return value
 
 
@@ -114,7 +120,8 @@ class PersonCreate(BaseModel):
     def valid_role(cls, value: str) -> str:
         allowed = {"Student", "Faculty", "Non-teaching Personnel"}
         if value not in allowed:
-            raise ValueError(f"Role must be one of: {', '.join(sorted(allowed))}")
+            raise ValueError(
+                f"Role must be one of: {', '.join(sorted(allowed))}")
         return value
 
     @field_validator("enrollment_status")
@@ -122,7 +129,8 @@ class PersonCreate(BaseModel):
     def valid_enrollment_status(cls, value: str) -> str:
         allowed = {"Regular", "Transferred In", "Transferred Out"}
         if value not in allowed:
-            raise ValueError(f"Enrollment status must be one of: {', '.join(sorted(allowed))}")
+            raise ValueError(
+                f"Enrollment status must be one of: {', '.join(sorted(allowed))}")
         return value
 
 
@@ -151,19 +159,23 @@ class SchedulePayload(BaseModel):
     @classmethod
     def valid_weekdays(cls, value: str) -> str:
         try:
-            days = sorted({int(item.strip()) for item in value.split(",") if item.strip()})
+            days = sorted({int(item.strip())
+                          for item in value.split(",") if item.strip()})
         except ValueError as exc:
             raise ValueError("Weekdays must use numbers 0 through 6") from exc
         if not days or any(day < 0 or day > 6 for day in days):
-            raise ValueError("Select at least one weekday from Monday through Sunday")
+            raise ValueError(
+                "Select at least one weekday from Monday through Sunday")
         return ",".join(str(day) for day in days)
 
     @model_validator(mode="after")
     def valid_time_range(self):
         if self.end_time <= self.start_time:
-            raise ValueError("Class end time must be later than its start time")
+            raise ValueError(
+                "Class end time must be later than its start time")
         if self.absence_cutoff and not self.start_time <= self.absence_cutoff <= self.end_time:
-            raise ValueError("Class absence cutoff must be within the class time")
+            raise ValueError(
+                "Class absence cutoff must be within the class time")
         return self
 
 
@@ -182,18 +194,21 @@ class PersonnelSchedulePayload(BaseModel):
     @classmethod
     def valid_personnel_role(cls, value: str) -> str:
         if value not in {"Faculty", "Non-teaching Personnel"}:
-            raise ValueError("Personnel role must be Faculty or Non-teaching Personnel")
+            raise ValueError(
+                "Personnel role must be Faculty or Non-teaching Personnel")
         return value
 
     @field_validator("weekdays")
     @classmethod
     def valid_weekdays(cls, value: str) -> str:
         try:
-            days = sorted({int(item.strip()) for item in value.split(",") if item.strip()})
+            days = sorted({int(item.strip())
+                          for item in value.split(",") if item.strip()})
         except ValueError as exc:
             raise ValueError("Weekdays must use numbers 0 through 6") from exc
         if not days or any(day < 0 or day > 6 for day in days):
-            raise ValueError("Select at least one weekday from Monday through Sunday")
+            raise ValueError(
+                "Select at least one weekday from Monday through Sunday")
         return ",".join(str(day) for day in days)
 
     @model_validator(mode="after")
@@ -201,7 +216,8 @@ class PersonnelSchedulePayload(BaseModel):
         if self.end_time <= self.start_time:
             raise ValueError("Duty end time must be later than its start time")
         if self.absence_cutoff and not self.start_time <= self.absence_cutoff <= self.end_time:
-            raise ValueError("Personnel absence cutoff must be within the duty time")
+            raise ValueError(
+                "Personnel absence cutoff must be within the duty time")
         return self
 
 
@@ -287,7 +303,8 @@ class CalendarExceptionPayload(BaseModel):
     @classmethod
     def valid_event_type(cls, value: str) -> str:
         if value not in {"Holiday", "Suspended", "Special Schedule"}:
-            raise ValueError("Event type must be Holiday, Suspended, or Special Schedule")
+            raise ValueError(
+                "Event type must be Holiday, Suspended, or Special Schedule")
         return value
 
 
@@ -323,9 +340,11 @@ class GradebookPayload(BaseModel):
     subject: str = Field(default="Unspecified", min_length=2, max_length=120)
     grade: str = Field(min_length=1, max_length=30)
     section: str = Field(min_length=1, max_length=80)
-    change_reason: str = Field(default="Authorized gradebook save", min_length=8, max_length=1000)
+    change_reason: str = Field(
+        default="Authorized gradebook save", min_length=8, max_length=1000)
     passing_grade: int = Field(default=75, ge=60, le=100)
-    components: list[GradeComponentPayload] = Field(min_length=1, max_length=500)
+    components: list[GradeComponentPayload] = Field(
+        min_length=1, max_length=500)
     scores: dict[str, dict[str, float | str]]
     score_statuses: dict[str, dict[str, str]] = Field(default_factory=dict)
 
@@ -335,7 +354,8 @@ class GradebookPayload(BaseModel):
         allowed = {"Scored", "Missing", "Excused", "Incomplete"}
         for statuses in value.values():
             if any(status not in allowed for status in statuses.values()):
-                raise ValueError(f"Score status must be one of: {', '.join(sorted(allowed))}")
+                raise ValueError(
+                    f"Score status must be one of: {', '.join(sorted(allowed))}")
         return value
 
 
@@ -351,7 +371,8 @@ class ReportReviewPayload(BaseModel):
     @classmethod
     def valid_status(cls, value: str) -> str:
         if value not in {"Reviewed", "Approved", "Rejected", "Superseded"}:
-            raise ValueError("Report status must be Reviewed, Approved, Rejected, or Superseded")
+            raise ValueError(
+                "Report status must be Reviewed, Approved, Rejected, or Superseded")
         return value
 
 
@@ -363,7 +384,8 @@ class RecognitionReviewResolutionPayload(BaseModel):
     @classmethod
     def valid_status(cls, value: str) -> str:
         if value not in {"Resolved", "Dismissed"}:
-            raise ValueError("Recognition review status must be Resolved or Dismissed")
+            raise ValueError(
+                "Recognition review status must be Resolved or Dismissed")
         return value
 
 

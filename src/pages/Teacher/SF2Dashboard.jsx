@@ -6,6 +6,7 @@ import SectionAttendance from '../../components/Teacher/SectionAttendance';
 import SF2ReportGenerator from '../../components/Teacher/SF2ReportGenerator';
 import StudentProfileModal from '../../components/Teacher/StudentProfileModal';
 import { api, localDate } from '../../api/client';
+import { useToast } from '../../contexts/ToastContext';
 
 export default function SF2Dashboard() {
   const [activeTab, setActiveTab] = useState('attendance');
@@ -13,9 +14,9 @@ export default function SF2Dashboard() {
   const [currentSchedule, setCurrentSchedule] = useState(null);
   const [selectedStudent, setSelectedStudent] = useState(null);
   const [rows, setRows] = useState([]);
-  const [error, setError] = useState('');
+  const { showError } = useToast();
 
-  useEffect(() => { api.get(`/attendance?date=${localDate()}`).then(setRows).catch((err) => setError(err.message)); }, []);
+  useEffect(() => { api.get(`/attendance?date=${localDate()}`).then(setRows).catch((err) => showError(err.message)); }, [showError]);
 
   const students = rows
     .filter((person) => person.role === 'Student' && (!currentSchedule || (person.grade === currentSchedule.grade && person.section === currentSchedule.section)))
@@ -41,7 +42,6 @@ export default function SF2Dashboard() {
       </div>
 
       <AdviserAnalyticsWidget students={students} />
-      {error && <div className="notice notice-danger">{error}</div>}
 
       {/* Module Tabs */}
       <div style={{ display: 'flex', gap: '8px', borderBottom: '2px solid var(--border-color)', paddingBottom: '16px' }}>

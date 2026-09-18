@@ -14,6 +14,7 @@ import {
   Loader2,
 } from 'lucide-react';
 import { auth } from '../../api/client';
+import { useToast } from '../../contexts/ToastContext';
 
 export default function GradebookActions({
   gradebook,
@@ -33,7 +34,7 @@ export default function GradebookActions({
   disabled = false,
 }) {
   const userRole = auth.role();
-  const canEdit = ['admin', 'teacher'].includes(userRole);
+  const canEdit = userRole === 'teacher';
   const isAdminOrOfficer = ['admin', 'records_officer'].includes(userRole);
 
   const status = gradebook?.status || 'Draft';
@@ -42,177 +43,125 @@ export default function GradebookActions({
   const isFinalized = status === 'Finalized';
   const isLocked = status === 'Locked';
 
-  // Action dialog state
   const [activeDialog, setActiveDialog] = useState(null); // 'submit' | 'finalize' | 'lock' | 'reopen'
-  const [reasonInput, setReasonInput] = useState('');
-  const [dialogError, setDialogError] = useState('');
+  const [isConfirmed, setIsConfirmed] = useState(false);
+  const { showError } = useToast();
 
   const openActionDialog = (type) => {
     setActiveDialog(type);
-    setReasonInput('');
-    setDialogError('');
+    setIsConfirmed(false);
   };
 
   const handleConfirmAction = async () => {
-    if (reasonInput.trim().length < 8) {
-      setDialogError('Please provide a specific justification of at least 8 characters.');
+    if (!isConfirmed) {
+      showError('You must confirm this action to proceed.');
       return;
     }
 
     try {
-      if (activeDialog === 'submit') await onSubmit?.(reasonInput.trim());
-      else if (activeDialog === 'finalize') await onFinalize?.(reasonInput.trim());
-      else if (activeDialog === 'lock') await onLock?.(reasonInput.trim());
-      else if (activeDialog === 'reopen') await onReopen?.(reasonInput.trim());
+      const defaultReason = "Action confirmed by user.";
+      if (activeDialog === 'finalize') await onFinalize?.(defaultReason);
+      else if (activeDialog === 'lock') await onLock?.(defaultReason);
+      else if (activeDialog === 'reopen') await onReopen?.(defaultReason);
       setActiveDialog(null);
     } catch (err) {
-      setDialogError(err.message || 'Action failed');
+      showError(err.message || 'Action failed');
     }
   };
 
   return (
-    <div className="gradebook-actions-bar card-static">
-      <div className="action-row flex-wrap items-center">
-        {/* Primary Editing Actions */}
-        {canEdit && isDraft && (
-          <>
+    <div className="gradebook-actions-bar card-static mb-4">
+      <div className="action-row flex-wrap items-center justify-between">
+        <div className="flex flex-wrap gap-2 items-center">
+          {/* Primary Workflow: Finalize */}
+          {canEdit && (isDraft || isSubmitted) && (
             <button
               type="button"
-              className={`btn ${isDirty ? 'btn-primary' : 'btn-secondary'}`}
-              onClick={onSaveDraft}
+              className="btn btn-success action-primary-workflow"
+              onClick={() => openActionDialog('finalize')}
               disabled={disabled || isSaving}
-              title={isDirty ? 'Save pending changes to database' : 'All changes saved'}
+              title="Finalize grades (computes official quarterly ratings)"
             >
-              {isSaving ? <Loader2 size={16} className="spin" /> : <Save size={16} />}
-              <span>{isSaving ? 'Saving...' : isDirty ? 'Save Draft *' : 'Save Draft'}</span>
+              <span className="font-bold">Finalize & Compute</span>
             </button>
+          )}
 
+          {/* Editing Actions */}
+          {isDraft && canEdit && (
+            <>
+              <button
+                type="button"
+                className={`btn ${isDirty ? 'btn-primary' : 'btn-secondary'}`}
+                onClick={onSaveDraft}
+                disabled={disabled || isSaving}
+                title={isDirty ? 'Save pending changes to database' : 'All changes saved'}
+              >
+                <span>{isSaving ? 'Saving...' : isDirty ? 'Save Draft *' : 'Save Draft'}</span>
+              </button>
+
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={onOpenConfig}
+                disabled={disabled || isSaving}
+                title="Configure components, activities, and weights"
+              >
+                <span>Assessment Setup</span>
+              </button>
+            </>
+          )}
+
+          {/* Admin Workflow */}
+          {isAdminOrOfficer && isFinalized && (
             <button
               type="button"
               className="btn btn-secondary"
-              onClick={onOpenConfig}
-              disabled={disabled || isSaving}
-              title="Configure components, activities, and weights"
+              onClick={() => openActionDialog('lock')}
+              disabled={disabled}
+              title="Lock and archive gradebook"
             >
-              <Sliders size={16} />
-              <span>Assessment Setup</span>
+              <span>Lock Gradebook</span>
             </button>
-          </>
-        )}
+          )}
 
-        {/* Workflow: Submit for review */}
-        {canEdit && isDraft && (
-          <button
-            type="button"
-            className="btn btn-secondary"
-            onClick={() => openActionDialog('submit')}
-            disabled={disabled || isSaving}
-            title="Submit gradebook for coordinator / admin review"
-          >
-            <Send size={16} />
-            <span>Submit Gradebook</span>
+          {isAdminOrOfficer && (isSubmitted || isFinalized || isLocked) && (
+            <button
+              type="button"
+              className="btn btn-warning"
+              onClick={() => openActionDialog('reopen')}
+              disabled={disabled}
+              title="Reopen gradebook with mandatory justification"
+            >
+              <span>Reopen Gradebook</span>
+            </button>
+          )}
+
+          {(isFinalized || isLocked) && (
+            <button
+              type="button"
+              className="btn btn-secondary text-primary"
+              onClick={onOpenAdjustments}
+              title="Request or review post-finalization grade adjustments"
+            >
+              <span>Grade Adjustments</span>
+            </button>
+          )}
+        </div>
+
+        <div className="flex flex-wrap gap-2 items-center secondary-action-group">
+          <button type="button" className="btn btn-secondary" onClick={onToggleValidation} title="Run pre-flight validation checklist">
+            <span>Validation</span>
           </button>
-        )}
-
-        {/* Workflow: Finalize */}
-        {canEdit && (isDraft || isSubmitted) && (
-          <button
-            type="button"
-            className="btn btn-success"
-            onClick={() => openActionDialog('finalize')}
-            disabled={disabled || isSaving}
-            title="Finalize grades (computes official quarterly ratings)"
-          >
-            <CheckCircle2 size={16} />
-            <span>Finalize & Compute</span>
+          <button type="button" className="btn btn-secondary" onClick={onExportXlsx} title="Download Excel spreadsheet (XLSX)">
+            <span>Export XLSX</span>
           </button>
-        )}
-
-        {/* Workflow: Lock / Archive (Admin only) */}
-        {isAdminOrOfficer && isFinalized && (
-          <button
-            type="button"
-            className="btn btn-secondary"
-            onClick={() => openActionDialog('lock')}
-            disabled={disabled}
-            title="Lock and archive gradebook"
-          >
-            <Lock size={16} />
-            <span>Lock Gradebook</span>
+          <button type="button" className="btn btn-secondary" onClick={onPrintReport} title="Open printable summary report">
+            <span>Print Summary</span>
           </button>
-        )}
-
-        {/* Workflow: Reopen with audited reason (Admin / Records Officer) */}
-        {isAdminOrOfficer && (isFinalized || isLocked) && (
-          <button
-            type="button"
-            className="btn btn-warning"
-            onClick={() => openActionDialog('reopen')}
-            disabled={disabled}
-            title="Reopen gradebook with mandatory justification"
-          >
-            <Unlock size={16} />
-            <span>Reopen Gradebook</span>
+          <button type="button" className="btn btn-secondary" onClick={onOpenAudit} title="View full audit log of all changes">
+            <span>Audit Log</span>
           </button>
-        )}
-
-        {/* Workflow: Post-Finalization Adjustment Requests */}
-        {(isFinalized || isLocked) && (
-          <button
-            type="button"
-            className="btn btn-secondary text-primary"
-            onClick={onOpenAdjustments}
-            title="Request or review post-finalization grade adjustments"
-          >
-            <ShieldAlert size={16} />
-            <span>Grade Adjustments</span>
-          </button>
-        )}
-
-        <div className="action-divider" />
-
-        {/* Validation Checklist Toggle */}
-        <button
-          type="button"
-          className="btn btn-secondary"
-          onClick={onToggleValidation}
-          title="Run pre-flight validation checklist"
-        >
-          <ClipboardCheck size={16} />
-          <span>Validation</span>
-        </button>
-
-        {/* Export & Reports */}
-        <button
-          type="button"
-          className="btn btn-secondary"
-          onClick={onExportXlsx}
-          title="Download Excel spreadsheet (XLSX)"
-        >
-          <Download size={16} />
-          <span>Export XLSX</span>
-        </button>
-
-        <button
-          type="button"
-          className="btn btn-secondary"
-          onClick={onPrintReport}
-          title="Open printable summary report"
-        >
-          <FileText size={16} />
-          <span>Print Summary</span>
-        </button>
-
-        {/* Audit History */}
-        <button
-          type="button"
-          className="btn btn-secondary"
-          onClick={onOpenAudit}
-          title="View full audit log of all changes"
-        >
-          <History size={16} />
-          <span>Audit Log</span>
-        </button>
+        </div>
       </div>
 
       {/* Workflow Action Confirmation Dialog */}
@@ -221,7 +170,6 @@ export default function GradebookActions({
           <div className="modal-card modal-sm">
             <div className="modal-header">
               <h3>
-                {activeDialog === 'submit' && 'Submit Gradebook'}
                 {activeDialog === 'finalize' && 'Finalize Gradebook'}
                 {activeDialog === 'lock' && 'Lock Gradebook'}
                 {activeDialog === 'reopen' && 'Authorized Reopen'}
@@ -230,8 +178,6 @@ export default function GradebookActions({
 
             <div className="modal-body">
               <p className="text-muted text-sm mb-3">
-                {activeDialog === 'submit' &&
-                  'Submitting this gradebook indicates all scores have been reviewed and is awaiting administrative finalization.'}
                 {activeDialog === 'finalize' &&
                   'Finalizing permanently calculates official quarterly ratings. Direct score edits will be locked. All learners must have complete scores.'}
                 {activeDialog === 'lock' &&
@@ -240,22 +186,17 @@ export default function GradebookActions({
                   'Reopening reverts the gradebook to Draft status. An explicit, auditable reason is required.'}
               </p>
 
-              {dialogError && (
-                <div className="notice notice-danger compact-notice mb-3">{dialogError}</div>
-              )}
-
-              <div className="form-group">
-                <label className="field-label">
-                  Official Justification / Reason <span className="text-danger">*</span>
-                </label>
-                <textarea
-                  className="input-field"
-                  rows={3}
-                  placeholder={`Reason for ${activeDialog}ing this gradebook... (min 8 characters)`}
-                  value={reasonInput}
-                  onChange={(e) => setReasonInput(e.target.value)}
-                  autoFocus
+              <div className="form-group" style={{ display: 'flex', alignItems: 'center', gap: '10px', marginTop: '15px' }}>
+                <input
+                  type="checkbox"
+                  id="confirm-action-checkbox"
+                  checked={isConfirmed}
+                  onChange={(e) => setIsConfirmed(e.target.checked)}
+                  style={{ width: '18px', height: '18px', cursor: 'pointer' }}
                 />
+                <label htmlFor="confirm-action-checkbox" style={{ margin: 0, cursor: 'pointer', fontWeight: 600 }}>
+                  I confirm this action
+                </label>
               </div>
             </div>
 
@@ -276,7 +217,7 @@ export default function GradebookActions({
                       : 'btn-primary'
                   }`}
                 onClick={handleConfirmAction}
-                disabled={reasonInput.trim().length < 8}
+                disabled={!isConfirmed}
               >
                 Confirm {activeDialog.charAt(0).toUpperCase() + activeDialog.slice(1)}
               </button>

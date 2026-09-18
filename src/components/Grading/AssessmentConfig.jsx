@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { AlertCircle, CheckCircle, ChevronDown, ChevronRight, Plus, Trash2, X } from 'lucide-react';
+import { useToast } from '../../contexts/ToastContext';
 
 export default function AssessmentConfig({ components, onSave, onClose, disabled = false }) {
   const [compList, setCompList] = useState(() =>
@@ -12,7 +13,7 @@ export default function AssessmentConfig({ components, onSave, onClose, disabled
   const [expanded, setExpanded] = useState(() =>
     components.reduce((acc, c, idx) => ({ ...acc, [idx]: true }), {})
   );
-  const [error, setError] = useState('');
+  const { showError } = useToast();
 
   const totalWeight = compList.reduce((sum, c) => sum + (Number(c.weight) || 0), 0);
   const isWeightValid = Math.abs(totalWeight - 100.0) < 0.01;
@@ -44,7 +45,7 @@ export default function AssessmentConfig({ components, onSave, onClose, disabled
 
   const removeComponent = (idx) => {
     if (compList.length <= 1) {
-      setError('At least one component is required.');
+      showError('At least one component is required.');
       return;
     }
     setCompList((prev) => prev.filter((_, i) => i !== idx));
@@ -85,33 +86,32 @@ export default function AssessmentConfig({ components, onSave, onClose, disabled
   };
 
   const handleSave = () => {
-    setError('');
     if (!isWeightValid) {
-      setError(`Component weights must total exactly 100% (currently ${totalWeight.toFixed(1)}%).`);
+      showError(`Component weights must total exactly 100% (currently ${totalWeight.toFixed(1)}%).`);
       return;
     }
     for (const c of compList) {
       if (!c.name.trim()) {
-        setError('All component names must be non-empty.');
+        showError('All component names must be non-empty.');
         return;
       }
       if (!c.items || c.items.length === 0) {
-        setError(`Component "${c.name}" must have at least one assessment item.`);
+        showError(`Component "${c.name}" must have at least one assessment item.`);
         return;
       }
       for (const item of c.items) {
         if (!item.label.trim()) {
-          setError(`Assessment labels under "${c.name}" cannot be empty.`);
+          showError(`Assessment labels under "${c.name}" cannot be empty.`);
           return;
         }
         if (Number(item.max_score) <= 0) {
-          setError(`Max score for "${item.label}" must be greater than 0.`);
+          showError(`Max score for "${item.label}" must be greater than 0.`);
           return;
         }
       }
     }
     if (!changeReason.trim() || changeReason.trim().length < 8) {
-      setError('Please provide a specific change reason (at least 8 characters) for audit trail.');
+      showError('Please provide a specific change reason (at least 8 characters) for audit trail.');
       return;
     }
     onSave(compList, changeReason.trim());
@@ -133,13 +133,6 @@ export default function AssessmentConfig({ components, onSave, onClose, disabled
         </div>
 
         <div className="modal-body">
-          {error && (
-            <div className="notice notice-danger compact-notice">
-              <AlertCircle size={16} />
-              <span>{error}</span>
-            </div>
-          )}
-
           {/* Weight progress bar */}
           <div className="weight-progress-box">
             <div className="weight-progress-label">

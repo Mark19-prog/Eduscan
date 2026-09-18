@@ -1,4 +1,6 @@
+import { useEffect, useRef } from 'react';
 import { BookOpen, CheckCircle2, Clock, Lock, Send, Shield } from 'lucide-react';
+import { useToast } from '../../contexts/ToastContext';
 
 const STATUS_CONFIG = {
   Draft: { icon: Clock, label: 'Draft', className: 'status-badge-draft', description: 'Editable by the teacher' },
@@ -8,47 +10,45 @@ const STATUS_CONFIG = {
 };
 
 export default function GradebookContext({ gradebook, policyName }) {
+  const { showError } = useToast();
+  const toastShown = useRef(false);
+
+  useEffect(() => {
+    if (gradebook?.reopen_reason && !toastShown.current) {
+      toastShown.current = true;
+      const adminName = gradebook.reopened_by_name ? gradebook.reopened_by_name : 'System Administrator';
+      showError(`Reopened by ${adminName}: ${gradebook.reopen_reason}`);
+    }
+  }, [gradebook, showError]);
+
   if (!gradebook) return null;
   const config = STATUS_CONFIG[gradebook.status] || STATUS_CONFIG.Draft;
   const StatusIcon = config.icon;
 
   return (
-    <section className="card-static gradebook-context">
+    <section className="card-static gradebook-context-card mb-4">
       <div className="gradebook-context-header">
         <div className="gradebook-context-info">
-          <p className="eyebrow"><BookOpen size={14} /> Active Gradebook</p>
-          <h2>{gradebook.subject_name}</h2>
+          <h2 className="context-subject-title">{gradebook.subject_name}</h2>
           <p className="gradebook-context-meta">
-            Grade {gradebook.grade_name} — {gradebook.section_name} &middot; SY {gradebook.school_year_name} &middot; Quarter {gradebook.quarter}
+            <span>Grade {gradebook.grade_name}</span>
+            <span className="bullet-divider">&bull;</span>
+            <span>{gradebook.section_name}</span>
+            <span className="bullet-divider">&bull;</span>
+            <span>SY {gradebook.school_year_name}</span>
+            <span className="bullet-divider">&bull;</span>
+            <span>Quarter {gradebook.quarter}</span>
           </p>
           {gradebook.teacher_name && <p className="gradebook-context-teacher">Teacher: <strong>{gradebook.teacher_name}</strong></p>}
         </div>
         <div className="gradebook-context-right">
-          <div className={`status-badge ${config.className}`}>
-            <StatusIcon size={16} />
+          <div className={`status-badge-sm ${config.className}`}>
+            <StatusIcon size={14} />
             <span>{config.label}</span>
           </div>
-          {policyName && (
-            <GradingPolicyBadge name={policyName} version={gradebook.policy_version} />
-          )}
         </div>
       </div>
-      {gradebook.reopen_reason && (
-        <div className="notice notice-warning compact-notice">
-          <Shield size={16} /> Reopened: {gradebook.reopen_reason}
-          {gradebook.reopened_by_name && <span className="muted-small"> by {gradebook.reopened_by_name}</span>}
-        </div>
-      )}
     </section>
   );
 }
 
-function GradingPolicyBadge({ name, version }) {
-  return (
-    <div className="policy-badge" title={`Grading Policy: ${name} v${version || '1.0'}`}>
-      <Shield size={14} />
-      <span>{name}</span>
-      {version && <span className="policy-version">v{version}</span>}
-    </div>
-  );
-}

@@ -1,4 +1,5 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { ToastProvider } from './contexts/ToastContext';
 
 // Layouts
 import PublicLayout from './layouts/PublicLayout';
@@ -37,42 +38,44 @@ function WorkspaceHome() {
 
 function App() {
   return (
-    <BrowserRouter>
-      <Routes>
-        {/* Public Routes (No authentication required) */}
-        <Route element={<PublicLayout />}>
-          <Route path="/" element={<Navigate to="/login" replace />} />
-          <Route path="/login" element={<Login />} />
-          <Route path="/account/security" element={<RoleGuard roles={['admin', 'teacher', 'scanner', 'records_officer', 'privacy_officer', 'ict']} allowPasswordChange><AccountSecurity /></RoleGuard>} />
-          <Route path="/scanner" element={<RoleGuard roles={['admin', 'scanner']}><Scanner /></RoleGuard>} />
-        </Route>
+    <ToastProvider>
+      <BrowserRouter>
+        <Routes>
+          {/* Public Routes (No authentication required) */}
+          <Route element={<PublicLayout />}>
+            <Route path="/" element={<Navigate to="/login" replace />} />
+            <Route path="/login" element={<Login />} />
+            <Route path="/account/security" element={<RoleGuard roles={['admin', 'teacher', 'scanner', 'records_officer', 'privacy_officer', 'ict']} allowPasswordChange><AccountSecurity /></RoleGuard>} />
+            <Route path="/scanner" element={<RoleGuard roles={['admin', 'scanner']}><Scanner /></RoleGuard>} />
+          </Route>
 
-        {/* Protected Routes (Authentication required in a real app) */}
-        <Route path="/dashboard" element={<RoleGuard roles={['admin', 'records_officer', 'privacy_officer', 'ict']}><AdminLayout /></RoleGuard>}>
-          <Route index element={<WorkspaceHome />} />
-          <Route path="attendance" element={<RoleGuard roles={['admin']}><Attendance /></RoleGuard>} />
-          <Route path="grading" element={<RoleGuard roles={['admin', 'records_officer']}><Grading /></RoleGuard>} />
-          <Route path="reports" element={<RoleGuard roles={['admin', 'records_officer']}><Reports /></RoleGuard>} />
-          <Route path="oversight" element={<RoleGuard roles={['admin', 'records_officer', 'privacy_officer', 'ict']}><Oversight /></RoleGuard>} />
-          <Route path="setup" element={<RoleGuard roles={['admin']}><SystemSetup /></RoleGuard>} />
-          <Route path="administration" element={<RoleGuard roles={['admin']}><Administration /></RoleGuard>} />
-        </Route>
+          {/* Protected Routes (Authentication required in a real app) */}
+          <Route path="/dashboard" element={<RoleGuard roles={['admin', 'records_officer', 'privacy_officer', 'ict']}><AdminLayout /></RoleGuard>}>
+            <Route index element={<WorkspaceHome />} />
+            <Route path="attendance" element={<RoleGuard roles={['admin']}><Attendance /></RoleGuard>} />
+            <Route path="grading" element={<RoleGuard roles={['admin', 'records_officer']}><Grading /></RoleGuard>} />
+            <Route path="reports" element={<RoleGuard roles={['admin', 'records_officer']}><Reports /></RoleGuard>} />
+            <Route path="oversight" element={<RoleGuard roles={['admin', 'records_officer', 'privacy_officer', 'ict']}><Oversight /></RoleGuard>} />
+            <Route path="setup" element={<RoleGuard roles={['admin']}><SystemSetup /></RoleGuard>} />
+            <Route path="administration" element={<RoleGuard roles={['admin']}><Administration /></RoleGuard>} />
+          </Route>
 
-        {/* Teacher Routes */}
-        <Route path="/teacher" element={<RoleGuard roles={['teacher']}><TeacherLayout /></RoleGuard>}>
-          <Route index element={<SF2Dashboard />} />
-          <Route path="truancy" element={<TruancyInterventions />} />
-          <Route path="roster" element={<MyAdvisory />} />
-          <Route path="attendance" element={<Attendance />} />
-          <Route path="grading" element={<Grading />} />
-          <Route path="reports" element={<Reports />} />
-          <Route path="schedules" element={<MySchedules />} />
-        </Route>
+          {/* Teacher Routes */}
+          <Route path="/teacher" element={<RoleGuard roles={['teacher']}><TeacherLayout /></RoleGuard>}>
+            <Route index element={<SF2Dashboard />} />
+            <Route path="truancy" element={<TruancyInterventions />} />
+            <Route path="roster" element={<MyAdvisory />} />
+            <Route path="attendance" element={<Attendance />} />
+            <Route path="grading" element={<Grading />} />
+            <Route path="reports" element={<Reports />} />
+            <Route path="schedules" element={<MySchedules />} />
+          </Route>
 
-        {/* Fallback route */}
-        <Route path="*" element={<Navigate to="/login" replace />} />
-      </Routes>
-    </BrowserRouter>
+          {/* Fallback route */}
+          <Route path="*" element={<Navigate to="/login" replace />} />
+        </Routes>
+      </BrowserRouter>
+    </ToastProvider>
   );
 }
 

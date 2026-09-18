@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
-import { AlertTriangle, CalendarDays, CheckCircle2, Clock3, ExternalLink, MessageSquareText, Network, Plus, Save, ShieldCheck, Smartphone, Trash2, UserCheck, UsersRound } from 'lucide-react';
+import { AlertTriangle, CalendarDays, Clock3, ExternalLink, MessageSquareText, Network, Plus, Save, ShieldCheck, Smartphone, Trash2, UserCheck, UsersRound } from 'lucide-react';
 import { api } from '../../api/client';
 import BiometricEnrollmentManager from '../../components/Setup/BiometricEnrollmentManager';
 import PersonnelScheduleManager from '../../components/Setup/PersonnelScheduleManager';
+import { useToast } from '../../contexts/ToastContext';
 
 const tabs = [['operations', 'Attendance rules'], ['personnel', 'Personnel schedules'], ['biometrics', 'Face enrollments'], ['sms', 'Android SMS'], ['privacy', 'Privacy & legal setup'], ['access', 'Roles & corrections']];
 const defaultSms = {
@@ -28,8 +29,7 @@ export default function SystemSetup() {
   const [personnelSchedules, setPersonnelSchedules] = useState([]);
   const [outbox, setOutbox] = useState([]);
   const [biometric, setBiometric] = useState(null);
-  const [notice, setNotice] = useState('');
-  const [error, setError] = useState('');
+  const { showSuccess, showError } = useToast();
   const [newSchedule, setNewSchedule] = useState({ grade: '10', section: 'Rizal', subject: '', teacher_name: '', weekdays: '0,1,2,3,4', start_time: '07:30', end_time: '08:30', late_grace_minutes: 15, absence_cutoff: '08:30', active: true });
   const [personnelForm, setPersonnelForm] = useState({ role: 'Faculty', assignment: '', weekdays: '0,1,2,3,4', start_time: '07:30', end_time: '16:30', late_grace_minutes: 15, absence_cutoff: '09:00', active: true });
   const [testPhone, setTestPhone] = useState('');
@@ -47,28 +47,26 @@ export default function SystemSetup() {
       setSchedules(scheduleRows); setPersonnelSchedules(personnelRows); setOutbox(smsRows); setBiometric(biometricStatus);
       setCalendarRows(calendarData); setExcusedRows(excusedData); setPeople(personRows);
     } catch (err) { setError(err.message); }
-  }, []);
+  }, [showError]);
   useEffect(() => { load(); }, [load]);
-  const success = (message) => { setNotice(message); setError(''); window.setTimeout(() => setNotice(''), 3500); };
+  const success = (message) => { showSuccess(message); };
   const patchArea = (area, field, value) => setSettings((current) => ({ ...current, [area]: { ...current[area], [field]: value } }));
 
-  const saveAttendance = async () => { try { await api.put('/settings/attendance', settings.attendance); success('Attendance rules saved to the database.'); } catch (err) { setError(err.message); } };
-  const saveSms = async () => { try { const s = settings.sms; await api.put('/settings/sms', { enabled: s.enabled, gateway_url: s.gateway_url, username: s.username, password: s.password || null, school_contact: s.school_contact, max_messages_per_30_minutes: Number(s.max_messages_per_30_minutes), time_in_template: s.templates.time_in, time_out_template: s.templates.time_out, tardiness_template: s.templates.tardiness, absence_template: s.templates.absence }); success('Android gateway credentials, rate control, and message templates saved; password stored encrypted.'); await load(); } catch (err) { setError(err.message); } };
-  const saveCompliance = async () => { try { await api.put('/settings/compliance', Object.fromEntries(complianceFields.map(([key]) => [key, settings.compliance[key] || '']))); success('Deployment evidence references saved.'); } catch (err) { setError(err.message); } };
-  const addSchedule = async () => { if (!newSchedule.subject || !newSchedule.teacher_name) return setError('Subject and teacher are required.'); try { await api.post('/schedules', newSchedule); success('Class schedule saved.'); setNewSchedule((current) => ({ ...current, subject: '', teacher_name: '' })); await load(); } catch (err) { setError(err.message); } };
-  const removeSchedule = async (id) => { try { await api.delete(`/schedules/${id}`); await load(); } catch (err) { setError(err.message); } };
-  const savePersonnelSchedule = async () => { try { await api.post('/personnel-schedules', { ...personnelForm, assignment: personnelForm.assignment || null }); success('Personnel duty schedule saved.'); await load(); } catch (err) { setError(err.message); } };
-  const removePersonnelSchedule = async (id) => { try { await api.delete(`/personnel-schedules/${id}`); await load(); } catch (err) { setError(err.message); } };
-  const sendTest = async () => { const form = new FormData(); form.append('phone', testPhone); form.append('message', 'EduScan Android gateway connection test from San Jose National High School.'); try { const result = await api.post('/sms/test', form); if (['accepted', 'processed', 'sent', 'delivered'].includes(result.status)) success(`Test SMS ${result.status} by the Android gateway. Check the recipient and reconcile delivery status.`); else setError(result.error || `Test status: ${result.status}`); await load(); } catch (err) { setError(err.message); } };
-  const checkGateway = async () => { try { const result = await api.get('/sms/gateway/check'); setGatewayCheck(result); setError(''); if (result.reachable) success('Android Local Server is reachable from EduScan.'); } catch (err) { setGatewayCheck(null); setError(err.message); } };
-  const saveCalendar = async () => { try { await api.post('/calendar/exceptions', { ...calendarForm, start_time: calendarForm.start_time || null, end_time: calendarForm.end_time || null, absence_cutoff: calendarForm.absence_cutoff || null }); success('Calendar exception saved.'); setCalendarForm((current) => ({ ...current, reason: '' })); await load(); } catch (err) { setError(err.message); } };
-  const removeCalendar = async (id) => { try { await api.delete(`/calendar/exceptions/${id}`); await load(); } catch (err) { setError(err.message); } };
-  const saveExcused = async () => { if (!excusedForm.person_id) return setError('Select a person for the excused absence.'); try { await api.post('/attendance/excused', { ...excusedForm, person_id: Number(excusedForm.person_id) }); success('Excused absence recorded.'); setExcusedForm((current) => ({ ...current, reason: '' })); await load(); } catch (err) { setError(err.message); } };
-  const removeExcused = async (id) => { try { await api.delete(`/attendance/excused/${id}`); await load(); } catch (err) { setError(err.message); } };
+  const saveAttendance = async () => { try { await api.put('/settings/attendance', settings.attendance); success('Attendance rules saved to the database.'); } catch (err) { showError(err.message); } };
+  const saveSms = async () => { try { const s = settings.sms; await api.put('/settings/sms', { enabled: s.enabled, gateway_url: s.gateway_url, username: s.username, password: s.password || null, school_contact: s.school_contact, max_messages_per_30_minutes: Number(s.max_messages_per_30_minutes), time_in_template: s.templates.time_in, time_out_template: s.templates.time_out, tardiness_template: s.templates.tardiness, absence_template: s.templates.absence }); success('Android gateway credentials, rate control, and message templates saved; password stored encrypted.'); await load(); } catch (err) { showError(err.message); } };
+  const saveCompliance = async () => { try { await api.put('/settings/compliance', Object.fromEntries(complianceFields.map(([key]) => [key, settings.compliance[key] || '']))); success('Deployment evidence references saved.'); } catch (err) { showError(err.message); } };
+  const addSchedule = async () => { if (!newSchedule.subject || !newSchedule.teacher_name) return showError('Subject and teacher are required.'); try { await api.post('/schedules', newSchedule); success('Class schedule saved.'); setNewSchedule((current) => ({ ...current, subject: '', teacher_name: '' })); await load(); } catch (err) { showError(err.message); } };
+  const removeSchedule = async (id) => { try { await api.delete(`/schedules/${id}`); await load(); } catch (err) { showError(err.message); } };
+  const savePersonnelSchedule = async () => { try { await api.post('/personnel-schedules', { ...personnelForm, assignment: personnelForm.assignment || null }); success('Personnel duty schedule saved.'); await load(); } catch (err) { showError(err.message); } };
+  const removePersonnelSchedule = async (id) => { try { await api.delete(`/personnel-schedules/${id}`); await load(); } catch (err) { showError(err.message); } };
+  const sendTest = async () => { const form = new FormData(); form.append('phone', testPhone); form.append('message', 'EduScan Android gateway connection test from San Jose National High School.'); try { const result = await api.post('/sms/test', form); if (['accepted', 'processed', 'sent', 'delivered'].includes(result.status)) success(`Test SMS ${result.status} by the Android gateway. Check the recipient and reconcile delivery status.`); else showError(result.error || `Test status: ${result.status}`); await load(); } catch (err) { showError(err.message); } };
+  const checkGateway = async () => { try { const result = await api.get('/sms/gateway/check'); setGatewayCheck(result); if (result.reachable) success('Android Local Server is reachable from EduScan.'); } catch (err) { setGatewayCheck(null); showError(err.message); } };
+  const saveCalendar = async () => { try { await api.post('/calendar/exceptions', { ...calendarForm, start_time: calendarForm.start_time || null, end_time: calendarForm.end_time || null, absence_cutoff: calendarForm.absence_cutoff || null }); success('Calendar exception saved.'); setCalendarForm((current) => ({ ...current, reason: '' })); await load(); } catch (err) { showError(err.message); } };
+  const removeCalendar = async (id) => { try { await api.delete(`/calendar/exceptions/${id}`); await load(); } catch (err) { showError(err.message); } };
+  const saveExcused = async () => { if (!excusedForm.person_id) return showError('Select a person for the excused absence.'); try { await api.post('/attendance/excused', { ...excusedForm, person_id: Number(excusedForm.person_id) }); success('Excused absence recorded.'); setExcusedForm((current) => ({ ...current, reason: '' })); await load(); } catch (err) { showError(err.message); } };
+  const removeExcused = async (id) => { try { await api.delete(`/attendance/excused/${id}`); await load(); } catch (err) { showError(err.message); } };
 
   return <div className="page-stack">
-    <div className="page-heading"><div><p className="eyebrow">Operational configuration</p><h1>System setup & governance</h1><p>Configure the working attendance, LBPH, Android SMS, reporting, access, and deployment evidence controls.</p></div></div>
-    {notice && <div className="notice notice-success"><CheckCircle2 size={18} /> {notice}</div>}{error && <div className="notice notice-danger"><AlertTriangle size={18} /> {error}</div>}
     <div className="notice notice-blue"><ShieldCheck size={19} /><div><strong>LBPH runtime: {biometric?.enabled ? 'enabled' : 'server-disabled'}.</strong> {biometric?.model ? `Active model ${biometric.model.version}: ${biometric.model.person_count} enrolled person(s), ${biometric.model.sample_count} samples.` : 'No trained model yet. Enroll an authorized person from the gate station.'} Deployment evidence below does not switch off development operation; it records the approvals required before live school use.</div></div>
     <div className="setup-tabs">{tabs.map(([id, label]) => <button key={id} className={active === id ? 'active' : ''} onClick={() => setActive(id)}>{label}</button>)}</div>
 
