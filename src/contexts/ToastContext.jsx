@@ -10,10 +10,10 @@ export function ToastProvider({ children }) {
     const id = Date.now().toString() + Math.random().toString();
     setToasts((prev) => [...prev, { id, message, type }]);
 
-    // Auto dismiss after 5 seconds
+    // Auto dismiss after 3 seconds
     setTimeout(() => {
       setToasts((prev) => prev.filter((toast) => toast.id !== id));
-    }, 5000);
+    }, 3000);
   }, []);
 
   const showSuccess = useCallback((message) => {

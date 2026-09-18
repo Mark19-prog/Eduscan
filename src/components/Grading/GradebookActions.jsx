@@ -28,6 +28,7 @@ export default function GradebookActions({
   onReopen,
   onOpenAudit,
   onOpenAdjustments,
+  adjustmentCount = 0,
   onToggleValidation,
   onExportXlsx,
   onPrintReport,
@@ -136,14 +137,15 @@ export default function GradebookActions({
             </button>
           )}
 
-          {(isFinalized || isLocked) && (
+          {(isFinalized || isLocked) && !isAdminOrOfficer && (
             <button
               type="button"
               className="btn btn-secondary text-primary"
               onClick={onOpenAdjustments}
-              title="Request or review post-finalization grade adjustments"
+              title="Request post-finalization grade adjustments"
             >
               <span>Grade Adjustments</span>
+              {adjustmentCount > 0 && <span className="notification-badge">{adjustmentCount}</span>}
             </button>
           )}
         </div>

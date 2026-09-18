@@ -53,6 +53,41 @@ export default function Grading() {
   // Navigation State
   const [activeTab, setActiveTab] = useState('gradebook');
 
+  // Badge States
+  const [adminPendingCount, setAdminPendingCount] = useState(0);
+  const [teacherAdjustmentCount, setTeacherAdjustmentCount] = useState(0);
+
+  // Load global pending adjustments count for admins
+  const loadAdminPendingCount = useCallback(() => {
+    if (auth.role() === 'admin' || auth.role() === 'records_officer') {
+      api.get('/admin/grade-adjustments')
+        .then(data => {
+          const pending = data.filter(r => r.status === 'Pending').length;
+          setAdminPendingCount(pending);
+        })
+        .catch(console.error);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadAdminPendingCount();
+  }, [loadAdminPendingCount]);
+
+  // Load specific gradebook adjustments count for teachers
+  const loadTeacherAdjustmentCount = useCallback(() => {
+    if (auth.role() === 'teacher' && gradebookId) {
+      api.get(`/gradebooks/${gradebookId}/adjustments`)
+        .then(data => {
+          setTeacherAdjustmentCount(data.length);
+        })
+        .catch(console.error);
+    }
+  }, [gradebookId]);
+
+  useEffect(() => {
+    loadTeacherAdjustmentCount();
+  }, [loadTeacherAdjustmentCount]);
+
   // 1. Initial Load: Academic Structure
   useEffect(() => {
     api
@@ -153,6 +188,15 @@ export default function Grading() {
   useEffect(() => {
     loadGradebook();
   }, [loadGradebook]);
+
+  // Refresh gradebook when switching tabs to ensure changes from other tabs (like Adjustments) are reflected
+  useEffect(() => {
+    if ((activeTab === 'gradebook' || activeTab === 'metrics') && gradebookId) {
+      api.get(`/gradebooks/${gradebookId}`)
+        .then(setFullGradebook)
+        .catch(err => console.error('Failed to refresh gradebook:', err));
+    }
+  }, [activeTab, gradebookId]);
 
   // 3. Handle Score and Status Edits in Memory
   const handleScoreChange = (studentId, itemId, value) => {
@@ -366,6 +410,7 @@ export default function Grading() {
     try {
       const data = await api.get(`/gradebooks/${gradebookId}/adjustments`);
       setAdjustmentsList(data);
+      setTeacherAdjustmentCount(data.length);
       setShowAdjustments(true);
     } catch (err) {
       showError(err.message);
@@ -431,12 +476,18 @@ export default function Grading() {
             onClick={() => setActiveTab('adjustments')}
           >
             Adjustment Requests
+            {adminPendingCount > 0 && <span className="notification-badge">{adminPendingCount}</span>}
           </button>
         )}
       </div>
 
       {activeTab === 'adjustments' && (
-        <GlobalAdjustmentsTab />
+        <GlobalAdjustmentsTab onRefresh={(data) => {
+          if (auth.role() === 'admin' || auth.role() === 'records_officer') {
+            const pending = data.filter(r => r.status === 'Pending').length;
+            setAdminPendingCount(pending);
+          }
+        }} />
       )}
 
       {(activeTab === 'gradebook' || activeTab === 'metrics') && (
@@ -586,6 +637,7 @@ export default function Grading() {
                     onReopen={handleReopenGradebook}
                     onOpenAudit={handleOpenAudit}
                     onOpenAdjustments={handleOpenAdjustments}
+                    adjustmentCount={teacherAdjustmentCount}
                     onToggleValidation={() => setShowValidation((prev) => !prev)}
                     onExportXlsx={handleExportXlsx}
                     onPrintReport={handlePrintReport}

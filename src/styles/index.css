@@ -4416,3 +4416,17 @@ button:disabled {
   background: #e2e8f0;
   color: var(--text-primary);
 }
+/* Notification Badge */
+.notification-badge {
+  background-color: var(--danger);
+  color: white;
+  border-radius: 9999px;
+  padding: 2px 6px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  line-height: 1;
+  margin-left: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}

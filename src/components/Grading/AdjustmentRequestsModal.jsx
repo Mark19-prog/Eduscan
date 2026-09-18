@@ -159,13 +159,15 @@ export default function AdjustmentRequestsModal({
               >
                 Adjustment Requests ({adjustments.length})
               </button>
-              <button
-                type="button"
-                className={`status-filter-btn${mode === 'create' ? ' status-filter-active status-filter-audit' : ''}`}
-                onClick={() => setMode('create')}
-              >
-                <Plus size={13} style={{ display: 'inline', marginRight: '3px' }} /> New Request
-              </button>
+              {!isAdminOrOfficer && (
+                <button
+                  type="button"
+                  className={`status-filter-btn${mode === 'create' ? ' status-filter-active status-filter-audit' : ''}`}
+                  onClick={() => setMode('create')}
+                >
+                  <Plus size={13} style={{ display: 'inline', marginRight: '3px' }} /> New Request
+                </button>
+              )}
             </div>
           </div>
 
@@ -301,7 +303,7 @@ export default function AdjustmentRequestsModal({
                     <th>Requested Change</th>
                     <th>Reason & Submitter</th>
                     <th>Status</th>
-                    <th>Actions</th>
+                    <th className="text-center">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -360,11 +362,11 @@ export default function AdjustmentRequestsModal({
                               {req.status.toUpperCase()}
                             </span>
                           </td>
-                          <td>
+                          <td className="text-center align-middle">
                             {isPending && isAdminOrOfficer && (
-                              <div className="action-row compact-actions flex-wrap gap-2 mb-2">
+                              <div className="action-row compact-actions flex-wrap gap-2 mb-2 justify-center">
                                 {reviewingId === req.id ? (
-                                  <div className="review-input-group flex-col items-start gap-2 w-48">
+                                  <div className="review-input-group flex-col items-center gap-2 w-48 mx-auto">
                                     <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer' }}>
                                       <input
                                         type="checkbox"
@@ -374,7 +376,7 @@ export default function AdjustmentRequestsModal({
                                       />
                                       <span className="text-sm font-semibold">I confirm this</span>
                                     </label>
-                                    <div className="flex gap-2">
+                                    <div className="flex gap-2 justify-center">
                                       <button
                                         type="button"
                                         className={`btn btn-sm ${reviewAction === 'Approved' ? 'btn-success' : 'btn-danger'}`}
@@ -393,7 +395,7 @@ export default function AdjustmentRequestsModal({
                                     </div>
                                   </div>
                                 ) : (
-                                  <>
+                                  <div className="flex gap-2 justify-center w-full">
                                     <button
                                       type="button"
                                       className="val-action-btn"
@@ -418,20 +420,20 @@ export default function AdjustmentRequestsModal({
                                     >
                                       Reject →
                                     </button>
-                                  </>
+                                  </div>
                                 )}
                               </div>
                             )}
-                            {isPending && (!isAdminOrOfficer || true) && (
+                            {(!isAdminOrOfficer || true) && (
                               <button
                                 type="button"
-                                className="btn-link-action"
-                                style={{ color: '#dc2626', padding: 0 }}
+                                className="btn-link-action mx-auto block"
+                                style={{ color: '#dc2626', padding: 0, marginTop: isAdminOrOfficer && isPending ? '4px' : '0px' }}
                                 title="Delete request"
                                 onClick={() => handleDeleteRequest(req.id)}
                                 disabled={loading}
                               >
-                                <Trash2 size={16} /> Delete
+                                <Trash2 size={16} />
                               </button>
                             )}
                           </td>

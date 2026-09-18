@@ -3,7 +3,7 @@ import { Loader2, AlertCircle, CheckCircle2, XCircle } from 'lucide-react';
 import { api } from '../../api/client';
 import { useToast } from '../../contexts/ToastContext';
 
-export default function GlobalAdjustmentsTab() {
+export default function GlobalAdjustmentsTab({ onRefresh }) {
   const [loading, setLoading] = useState(true);
   const [adjustments, setAdjustments] = useState([]);
   const { showError } = useToast();
@@ -18,6 +18,7 @@ export default function GlobalAdjustmentsTab() {
     try {
       const data = await api.get('/admin/grade-adjustments');
       setAdjustments(data);
+      onRefresh?.(data);
     } catch (err) {
       showError(err.message);
     } finally {
