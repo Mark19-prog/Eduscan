@@ -840,7 +840,19 @@ def review_adjustment_request(
     return req
 
 
-# ---------------------------------------------------------------------------
+def delete_adjustment_request(db: Session, request_id: int, user: User) -> bool:
+    req = db.get(GradeAdjustmentRequest, request_id)
+    if not req:
+        raise ValueError("Adjustment request not found")
+    if req.status != "Pending":
+        raise ValueError("Only pending requests can be deleted")
+    if user.role not in {"admin", "records_officer"} and req.requested_by != user.id:
+        raise ValueError("You don't have permission to delete this request")
+    
+    db.delete(req)
+    db.commit()
+    return True
+
 # Legacy gradebook_summary (kept for old endpoints)
 # ---------------------------------------------------------------------------
 

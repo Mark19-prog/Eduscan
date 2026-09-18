@@ -2472,6 +2472,19 @@ def review_adjustment_endpoint(
     return {"id": req.id, "status": req.status}
 
 
+@app.delete("/api/adjustment-requests/{request_id}")
+def delete_adjustment_endpoint(
+    request_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_roles("admin", "teacher", "records_officer")),
+):
+    try:
+        grading_service.delete_adjustment_request(db, request_id, user)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {"status": "deleted"}
+
+
 @app.get("/api/gradebooks/{gradebook_id}/report.xlsx")
 def gradebook_report_xlsx_new(
     gradebook_id: int,

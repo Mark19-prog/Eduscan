@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Plus, X } from 'lucide-react';
+import { Plus, X, Trash2 } from 'lucide-react';
 import { api, auth } from '../../api/client';
 import { useToast } from '../../contexts/ToastContext';
 
@@ -109,6 +109,21 @@ export default function AdjustmentRequestsModal({
       });
       setReviewingId(null);
       setIsReviewConfirmed(false);
+      onRefresh?.();
+    } catch (err) {
+      showError(err.message);
+    } finally {
+      setLoading(false);
+      setReviewingId(null);
+    }
+  };
+
+  const handleDeleteRequest = async (id) => {
+    if (!window.confirm("Are you sure you want to delete this adjustment request?")) return;
+    setLoading(true);
+    try {
+      await api.delete(`/adjustment-requests/${id}`);
+      showSuccess("Adjustment request successfully deleted.");
       onRefresh?.();
     } catch (err) {
       showError(err.message);
@@ -286,13 +301,13 @@ export default function AdjustmentRequestsModal({
                     <th>Requested Change</th>
                     <th>Reason & Submitter</th>
                     <th>Status</th>
-                    {isAdminOrOfficer && <th>Actions</th>}
+                    <th>Actions</th>
                   </tr>
                 </thead>
                 <tbody>
                   {adjustments.length === 0 ? (
                     <tr>
-                      <td colSpan={isAdminOrOfficer ? 6 : 5} className="empty-cell text-center py-8 text-muted">
+                      <td colSpan={6} className="empty-cell text-center py-8 text-muted">
                         No adjustment requests recorded for this gradebook.
                       </td>
                     </tr>
@@ -345,71 +360,81 @@ export default function AdjustmentRequestsModal({
                               {req.status.toUpperCase()}
                             </span>
                           </td>
-                          {isAdminOrOfficer && (
-                            <td>
-                              {isPending && (
-                                <div className="action-row compact-actions flex-wrap gap-2">
-                                  {reviewingId === req.id ? (
-                                    <div className="review-input-group flex-col items-start gap-2 w-48">
-                                      <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer' }}>
-                                        <input
-                                          type="checkbox"
-                                          checked={isReviewConfirmed}
-                                          onChange={(e) => setIsReviewConfirmed(e.target.checked)}
-                                          style={{ cursor: 'pointer' }}
-                                        />
-                                        <span className="text-sm font-semibold">I confirm this</span>
-                                      </label>
-                                      <div className="flex gap-2">
-                                        <button
-                                          type="button"
-                                          className={`btn btn-sm ${reviewAction === 'Approved' ? 'btn-success' : 'btn-danger'}`}
-                                          onClick={() => handleReview(req.id, reviewAction)}
-                                          disabled={loading || !isReviewConfirmed}
-                                        >
-                                          Confirm {reviewAction === 'Approved' ? 'Approve' : 'Reject'}
-                                        </button>
-                                        <button
-                                          type="button"
-                                          className="btn btn-sm btn-secondary"
-                                          onClick={() => setReviewingId(null)}
-                                        >
-                                          Cancel
-                                        </button>
-                                      </div>
+                          <td>
+                            {isPending && isAdminOrOfficer && (
+                              <div className="action-row compact-actions flex-wrap gap-2 mb-2">
+                                {reviewingId === req.id ? (
+                                  <div className="review-input-group flex-col items-start gap-2 w-48">
+                                    <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer' }}>
+                                      <input
+                                        type="checkbox"
+                                        checked={isReviewConfirmed}
+                                        onChange={(e) => setIsReviewConfirmed(e.target.checked)}
+                                        style={{ cursor: 'pointer' }}
+                                      />
+                                      <span className="text-sm font-semibold">I confirm this</span>
+                                    </label>
+                                    <div className="flex gap-2">
+                                      <button
+                                        type="button"
+                                        className={`btn btn-sm ${reviewAction === 'Approved' ? 'btn-success' : 'btn-danger'}`}
+                                        onClick={() => handleReview(req.id, reviewAction)}
+                                        disabled={loading || !isReviewConfirmed}
+                                      >
+                                        Confirm {reviewAction === 'Approved' ? 'Approve' : 'Reject'}
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className="btn btn-sm btn-secondary"
+                                        onClick={() => setReviewingId(null)}
+                                      >
+                                        Cancel
+                                      </button>
                                     </div>
-                                  ) : (
-                                    <>
-                                      <button
-                                        type="button"
-                                        className="val-action-btn"
-                                        style={{ borderColor: '#16a34a', color: '#16a34a' }}
-                                        title="Approve request"
-                                        onClick={() => {
-                                          setReviewingId(req.id);
-                                          setReviewAction('Approved');
-                                        }}
-                                      >
-                                        Approve →
-                                      </button>
-                                      <button
-                                        type="button"
-                                        className="val-action-btn"
-                                        style={{ borderColor: '#dc2626', color: '#dc2626' }}
-                                        title="Reject request"
-                                        onClick={() => {
-                                          setReviewingId(req.id);
-                                          setReviewAction('Rejected');
-                                        }}
-                                      >
-                                        Reject →
-                                      </button>
-                                    </>
-                                  )}
-                                </div>
-                              )}
-                            </td>
-                          )}
+                                  </div>
+                                ) : (
+                                  <>
+                                    <button
+                                      type="button"
+                                      className="val-action-btn"
+                                      style={{ borderColor: '#16a34a', color: '#16a34a' }}
+                                      title="Approve request"
+                                      onClick={() => {
+                                        setReviewingId(req.id);
+                                        setReviewAction('Approved');
+                                      }}
+                                    >
+                                      Approve →
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className="val-action-btn"
+                                      style={{ borderColor: '#dc2626', color: '#dc2626' }}
+                                      title="Reject request"
+                                      onClick={() => {
+                                        setReviewingId(req.id);
+                                        setReviewAction('Rejected');
+                                      }}
+                                    >
+                                      Reject →
+                                    </button>
+                                  </>
+                                )}
+                              </div>
+                            )}
+                            {isPending && (!isAdminOrOfficer || true) && (
+                              <button
+                                type="button"
+                                className="btn-link-action"
+                                style={{ color: '#dc2626', padding: 0 }}
+                                title="Delete request"
+                                onClick={() => handleDeleteRequest(req.id)}
+                                disabled={loading}
+                              >
+                                <Trash2 size={16} /> Delete
+                              </button>
+                            )}
+                          </td>
                         </tr>
                       );
                     })
